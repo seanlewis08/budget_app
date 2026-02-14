@@ -1,0 +1,74 @@
+{
+  "name": "budget-app",
+  "version": "0.1.0",
+  "description": "Personal finance tracker with AI-powered categorization",
+  "main": "electron/main.js",
+  "author": "Sean Lewis",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"cd frontend && npm run dev\" \"cd backend && python3 -m uvicorn backend.main:app --port 8000 --reload\"",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && python3 -m uvicorn backend.main:app --port 8000 --reload",
+    "dev:electron": "NODE_ENV=development electron .",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "cd backend && pyinstaller budget-app.spec",
+    "build": "npm run build:frontend && electron-builder",
+    "postinstall": "cd frontend && npm install"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.seanlewis.budgetapp",
+    "productName": "Budget App",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/dist/budget-app-backend",
+        "to": "backend/"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.finance",
+      "icon": "electron/icons/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ]
+    },
+    "win": {
+      "icon": "electron/icons/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "seanlewis08",
+      "repo": "budget_app"
+    }
+  }
+}
