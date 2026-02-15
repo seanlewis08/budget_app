@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Label: Unique identifier for this LaunchAgent -->
+    <key>Label</key>
+    <string>com.seanlewis.budgetapp.sync</string>
+
+    <!-- Working directory -->
+    <key>WorkingDirectory</key>
+    <string>/Users/seanlewis/DataspellProjects/budget-app</string>
+
+    <!-- Command: Run the sync daemon via uv -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/seanlewis/.local/bin/uv</string>
+        <string>run</string>
+        <string>python3</string>
+        <string>-m</string>
+        <string>backend.sync_daemon</string>
+    </array>
+
+    <!-- Schedule: Run every 12 hours (43200 seconds) -->
+    <key>StartInterval</key>
+    <integer>43200</integer>
+
+    <!-- Also run once at load (on login) -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Logging -->
+    <key>StandardOutPath</key>
+    <string>/Users/seanlewis/BudgetApp/logs/sync-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/seanlewis/BudgetApp/logs/sync-stderr.log</string>
+
+    <!-- Keep alive: restart if it exits unexpectedly -->
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>

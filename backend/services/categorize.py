@@ -138,7 +138,7 @@ def _check_merchant_mappings(desc_upper: str, db: Session) -> Optional[dict]:
                 "short_desc": category.short_desc,
                 "tier": "merchant_map",
                 "status": status,
-                "confidence": best_match.confidence,
+                "confidence": min(best_match.confidence / AUTO_CONFIRM_THRESHOLD, 1.0),
             }
 
     return None
@@ -184,7 +184,7 @@ def _classify_with_ai(description: str, amount: float, db: Session) -> Optional[
 
         prompt = f"""You are a personal finance categorization assistant. Given a bank transaction description and amount, classify it into one of the user's personal categories.
 
-VALID CATEGORIES:
+VALID CATEGORIES (you MUST respond with one of these exact short_desc values):
 {category_list}
 
 EXAMPLES FROM THIS USER'S HISTORY:
@@ -194,7 +194,7 @@ TRANSACTION TO CLASSIFY:
 Description: "{description}"
 Amount: ${amount}
 
-Respond with ONLY the short_desc category name, nothing else. If unsure, respond with your best guess."""
+Respond with ONLY the exact short_desc value from the VALID CATEGORIES list above. No explanation, no quotes, no punctuation — just the short_desc. If unsure, respond with your best guess from the list."""
 
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
@@ -203,9 +203,33 @@ Respond with ONLY the short_desc category name, nothing else. If unsure, respond
         )
 
         predicted = response.content[0].text.strip().lower()
+        # Normalize: strip quotes, whitespace, underscores/hyphens
+        predicted = predicted.strip('"\'').strip()
 
-        # Validate the prediction is a real category
+        logger.info(f"AI raw response for '{description}': '{predicted}'")
+
+        # Try exact match first
         category = db.query(Category).filter(Category.short_desc == predicted).first()
+
+        # Try with underscore/space/hyphen normalization
+        if not category:
+            normalized = predicted.replace(" ", "_").replace("-", "_")
+            category = db.query(Category).filter(Category.short_desc == normalized).first()
+
+        # Try partial match — AI response contains or is contained by a short_desc
+        if not category:
+            all_cats = db.query(Category).filter(Category.parent_id.isnot(None)).all()
+            for cat in all_cats:
+                if cat.short_desc == predicted or cat.short_desc.replace("_", " ") == predicted:
+                    category = cat
+                    break
+            # Fallback: check if AI response is a substring match
+            if not category:
+                for cat in all_cats:
+                    if predicted in cat.short_desc or cat.short_desc in predicted:
+                        category = cat
+                        break
+
         if category:
             return {
                 "category_id": category.id,
@@ -214,8 +238,10 @@ Respond with ONLY the short_desc category name, nothing else. If unsure, respond
                 "status": "pending_review",  # AI predictions always need review
                 "confidence": 0.7,
             }
+        else:
+            logger.warning(f"AI predicted '{predicted}' for '{description}' but no matching category found")
 
     except Exception as e:
-        logger.warning(f"AI categorization failed: {e}")
+        logger.warning(f"AI categorization failed for '{description}': {e}")
 
     return None

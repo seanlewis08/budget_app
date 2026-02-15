@@ -18,7 +18,10 @@ DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False},  # Required for SQLite + FastAPI
+    connect_args={
+        "check_same_thread": False,  # Required for SQLite + FastAPI
+        "timeout": 30,  # Wait up to 30s for locks (default is 5s)
+    },
     echo=False,
 )
 

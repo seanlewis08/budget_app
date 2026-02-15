@@ -1,0 +1,41 @@
+#!/bin/bash
+# Budget App launcher — macOS .app wrapper
+# Double-click this .app or add to Dock
+
+APP_DIR="$HOME/DataspellProjects/budget-app"
+cd "$APP_DIR"
+
+cleanup() {
+  [ -n "$BACKEND_PID" ] && kill "$BACKEND_PID" 2>/dev/null
+  [ -n "$FRONTEND_PID" ] && kill "$FRONTEND_PID" 2>/dev/null
+  wait 2>/dev/null
+  exit 0
+}
+trap cleanup INT TERM EXIT
+
+# Ensure uv and node are on PATH (homebrew)
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
+# Start backend
+uv run uvicorn backend.main:app --port 8000 --reload &
+BACKEND_PID=$!
+
+# Start frontend
+cd frontend && npm run dev &
+FRONTEND_PID=$!
+cd "$APP_DIR"
+
+# Wait for backend
+for i in $(seq 1 30); do
+  curl -s http://localhost:8000/health > /dev/null 2>&1 && break
+  sleep 1
+done
+
+# Wait for frontend
+for i in $(seq 1 30); do
+  curl -s http://localhost:5173 > /dev/null 2>&1 && break
+  sleep 1
+done
+
+# Launch Electron
+NODE_ENV=development npx electron .

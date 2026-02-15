@@ -39,8 +39,8 @@ function startBackend() {
   if (isDev) {
     // Development mode: run uvicorn
     console.log('Starting backend in dev mode (uvicorn)...')
-    backendProcess = spawn('python3', [
-      '-m', 'uvicorn',
+    backendProcess = spawn('uv', [
+      'run', 'uvicorn',
       'backend.main:app',
       '--port', String(BACKEND_PORT),
       '--reload',

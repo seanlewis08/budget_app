@@ -12,6 +12,9 @@ const { app, BrowserWindow, shell } = require('electron')
 const path = require('path')
 const { startBackend, stopBackend, isBackendReady } = require('./backend-manager')
 
+// Set app name (shown in menu bar, Dock, and About panel)
+app.setName('Budget App')
+
 let mainWindow = null
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
@@ -43,8 +46,7 @@ function createWindow() {
   // Load the app
   if (isDev) {
     // Development: load from Vite dev server
-    mainWindow.loadURL('http://localhost:3000')
-    mainWindow.webContents.openDevTools()
+    mainWindow.loadURL('http://localhost:5173')
   } else {
     // Production: load the built React app
     mainWindow.loadFile(path.join(__dirname, '..', 'frontend', 'dist', 'index.html'))
@@ -62,26 +64,39 @@ function createWindow() {
 }
 
 async function startup() {
-  // Start the Python backend
-  console.log('Starting Python backend...')
-  startBackend()
-
-  // Wait for the backend to be ready (up to 30 seconds)
-  const maxRetries = 60
-  let retries = 0
-
-  while (retries < maxRetries) {
-    if (await isBackendReady()) {
-      console.log('Backend is ready!')
-      break
+  if (isDev) {
+    // In dev mode (start.sh), backend/frontend are already running
+    // Just wait for them to be reachable
+    console.log('Dev mode — waiting for backend...')
+    const maxRetries = 60
+    let retries = 0
+    while (retries < maxRetries) {
+      if (await isBackendReady()) {
+        console.log('Backend is ready!')
+        break
+      }
+      await new Promise(resolve => setTimeout(resolve, 500))
+      retries++
     }
-    await new Promise(resolve => setTimeout(resolve, 500))
-    retries++
-  }
+  } else {
+    // Production: start the bundled backend
+    console.log('Starting Python backend...')
+    startBackend()
 
-  if (retries >= maxRetries) {
-    console.error('Backend failed to start within 30 seconds')
-    // Still open the window — it'll show connection errors
+    const maxRetries = 60
+    let retries = 0
+    while (retries < maxRetries) {
+      if (await isBackendReady()) {
+        console.log('Backend is ready!')
+        break
+      }
+      await new Promise(resolve => setTimeout(resolve, 500))
+      retries++
+    }
+
+    if (retries >= maxRetries) {
+      console.error('Backend failed to start within 30 seconds')
+    }
   }
 
   createWindow()
@@ -91,7 +106,7 @@ async function startup() {
 app.whenReady().then(startup)
 
 app.on('window-all-closed', () => {
-  stopBackend()
+  if (!isDev) stopBackend()
   if (process.platform !== 'darwin') {
     app.quit()
   }
@@ -104,5 +119,5 @@ app.on('activate', () => {
 })
 
 app.on('before-quit', () => {
-  stopBackend()
+  if (!isDev) stopBackend()
 })

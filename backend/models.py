@@ -50,8 +50,16 @@ class Account(Base):
     institution = Column(String(50), nullable=False)  # "discover", "sofi", "wellsfargo"
     account_type = Column(String(20), nullable=False)  # "checking", "savings", "credit"
     plaid_item_id = Column(String(100), nullable=True)
-    plaid_access_token = Column(Text, nullable=True)  # encrypted
+    plaid_access_token = Column(Text, nullable=True)  # encrypted with Fernet
     plaid_cursor = Column(Text, nullable=True)
+    plaid_account_id = Column(String(100), nullable=True)  # Plaid's account ID
+    plaid_connection_status = Column(String(20), default="disconnected", nullable=False)
+    last_synced_at = Column(DateTime, nullable=True)
+    last_sync_error = Column(Text, nullable=True)
+    balance_current = Column(Float, nullable=True)
+    balance_available = Column(Float, nullable=True)
+    balance_limit = Column(Float, nullable=True)  # credit limit
+    balance_updated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -77,6 +85,7 @@ class Transaction(Base):
     source = Column(String(20), default="csv_import", nullable=False)
     is_pending = Column(Boolean, default=False)
     categorization_tier = Column(String(20), nullable=True)  # "amount_rule", "merchant_map", "ai"
+    prediction_confidence = Column(Float, nullable=True)  # 0.0–1.0, set by categorize_transaction()
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Indexes

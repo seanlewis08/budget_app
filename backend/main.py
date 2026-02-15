@@ -12,16 +12,21 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from .database import init_db
-from .routers import transactions, categories, budgets, import_csv, notifications
+from .migrations import run_migrations
+from .routers import transactions, categories, budgets, import_csv, notifications, accounts, archive
 from .services.seed_data import seed_categories_and_accounts
+from .services.sync_scheduler import start_scheduler, stop_scheduler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Run on startup: create tables and seed data."""
+    """Run on startup: create tables, migrate, seed data, start sync scheduler."""
     init_db()
+    run_migrations()
     seed_categories_and_accounts()
+    start_scheduler()
     yield
+    stop_scheduler()
 
 
 app = FastAPI(
@@ -46,6 +51,8 @@ app.include_router(categories.router, prefix="/api/categories", tags=["Categorie
 app.include_router(budgets.router, prefix="/api/budgets", tags=["Budgets"])
 app.include_router(import_csv.router, prefix="/api/import", tags=["CSV Import"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
+app.include_router(accounts.router, prefix="/api/accounts", tags=["Accounts"])
+app.include_router(archive.router, prefix="/api/archive", tags=["Archive Import"])
 
 
 @app.get("/health")
@@ -64,12 +71,14 @@ def get_stats():
     try:
         total = db.query(Transaction).count()
         pending = db.query(Transaction).filter(Transaction.status == "pending_review").count()
+        pending_save = db.query(Transaction).filter(Transaction.status == "pending_save").count()
         confirmed = db.query(Transaction).filter(
             Transaction.status.in_(["confirmed", "auto_confirmed"])
         ).count()
         return {
             "total_transactions": total,
             "pending_review": pending,
+            "pending_save": pending_save,
             "confirmed": confirmed,
         }
     finally:
