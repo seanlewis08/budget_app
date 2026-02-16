@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Frontend & React UI — Budget App Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../styles.css" />
+  <link rel="stylesheet" href="docs.css" />
+</head>
+<body>
+  <nav class="nav scrolled" id="nav">
+    <div class="nav-inner">
+      <a href="../" class="nav-logo">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#6c5ce7"/><path d="M7 20V8h4.5c2.5 0 4 1.2 4 3.2 0 1.5-.9 2.5-2.2 2.9l2.8 5.9h-2.8l-2.4-5.3H9.4V20H7zm2.4-7.2h2c1.2 0 1.8-.6 1.8-1.5s-.6-1.5-1.8-1.5h-2v3z" fill="white"/><circle cx="20" cy="20" r="4" fill="#a29bfe"/></svg>
+        <span>Budget App</span>
+      </a>
+      <div class="nav-links">
+        <a href="../#features">Features</a>
+        <a href="./">Docs</a>
+        <a href="https://github.com/seanlewis08/budget-app" class="nav-cta" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          GitHub
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="docs-layout">
+    <aside class="docs-sidebar">
+      <h3>Walkthrough</h3>
+      <nav class="docs-nav">
+        <a href="01-project-setup.html">
+          <span class="docs-nav-num">01</span>
+          Project Setup & Foundation
+        </a>
+        <a href="02-database-and-models.html">
+          <span class="docs-nav-num">02</span>
+          Database Models & Backend Core
+        </a>
+        <a href="03-plaid-integration.html">
+          <span class="docs-nav-num">03</span>
+          Plaid Integration & Accounts
+        </a>
+        <a href="04-categorization-engine.html">
+          <span class="docs-nav-num">04</span>
+          Categorization Engine
+        </a>
+        <a href="05-frontend-react.html" class="active">
+          <span class="docs-nav-num">05</span>
+          Frontend & React UI
+        </a>
+        <a href="06-advanced-features.html">
+          <span class="docs-nav-num">06</span>
+          Advanced Features
+        </a>
+        <a href="07-electron-and-deployment.html">
+          <span class="docs-nav-num">07</span>
+          Electron & Deployment
+        </a>
+      </nav>
+    </aside>
+
+    <main class="docs-content">
+      <div class="md-content">
+<h1 id="part-5-frontend-react-ui">Part 5 — Frontend &amp; React UI</h1>
+<p>This part covers the entire React frontend: the app shell, routing, all 13+ pages, shared components, and CSS styling. The frontend uses React 18, React Router 6, Recharts for data visualization, and Lucide React for icons.</p>
+<hr>
+<h2 id="51-app-shell-and-routing-appjsx">5.1 App Shell and Routing (<code>App.jsx</code>)</h2>
+<p>The app has a fixed sidebar navigation and a main content area. The top-level <code>App</code> component wraps everything in a <code>BrowserRouter</code>:</p>
+<pre><code class="language-jsx">import React, { useState, useEffect, useCallback } from 'react'
+import { BrowserRouter, Routes, Route, NavLink, useNavigate } from 'react-router-dom'
+import { usePlaidLink } from 'react-plaid-link'
+import {
+  LayoutDashboard, CheckSquare, TrendingUp, Wallet, Settings,
+  FolderTree, Database, BarChart3, Repeat, LineChart, Sparkles
+} from 'lucide-react'
+
+// Page imports
+import ReviewQueue from './pages/ReviewQueue'
+import Spending from './pages/Spending'
+import Budget from './pages/Budget'
+import Accounts from './pages/Accounts'
+import Categories from './pages/Categories'
+import Data from './pages/Data'
+import CashFlow from './pages/CashFlow'
+import RecurringMonitor from './pages/RecurringMonitor'
+import Investments from './pages/Investments'
+import Insights from './pages/Insights'
+import SettingsPage from './pages/Settings'
+import DeletedTransactions from './pages/DeletedTransactions'
+import SyncHistory from './pages/SyncHistory'
+</code></pre>
+<h3 id="sidebar">Sidebar</h3>
+<p>The sidebar uses <code>NavLink</code> for active-state highlighting and shows a badge with the count of pending + staged transactions:</p>
+<pre><code class="language-jsx">function Sidebar({ pendingCount }) {
+  return (
+    &lt;nav className=&quot;sidebar&quot;&gt;
+      &lt;div className=&quot;sidebar-logo&quot;&gt;
+        &lt;h1&gt;Budget App&lt;/h1&gt;
+        &lt;p&gt;Personal Finance Tracker&lt;/p&gt;
+      &lt;/div&gt;
+      &lt;ul className=&quot;nav-links&quot;&gt;
+        &lt;li&gt;
+          &lt;NavLink to=&quot;/&quot; end&gt;
+            &lt;CheckSquare size={18} /&gt;
+            Review Queue
+            {pendingCount &gt; 0 &amp;&amp; (
+              &lt;span className=&quot;badge&quot;&gt;{pendingCount}&lt;/span&gt;
+            )}
+          &lt;/NavLink&gt;
+        &lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/spending&quot;&gt;&lt;TrendingUp size={18} /&gt;Spending&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/cash-flow&quot;&gt;&lt;BarChart3 size={18} /&gt;Cash Flow&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/recurring&quot;&gt;&lt;Repeat size={18} /&gt;Recurring&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/budget&quot;&gt;&lt;Wallet size={18} /&gt;Budget&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/accounts&quot;&gt;&lt;LayoutDashboard size={18} /&gt;Accounts&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/investments&quot;&gt;&lt;LineChart size={18} /&gt;Investments&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/insights&quot;&gt;&lt;Sparkles size={18} /&gt;Insights&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/data&quot;&gt;&lt;Database size={18} /&gt;Data&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/categories&quot;&gt;&lt;FolderTree size={18} /&gt;Categories&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/settings&quot;&gt;&lt;Settings size={18} /&gt;Settings&lt;/NavLink&gt;&lt;/li&gt;
+      &lt;/ul&gt;
+    &lt;/nav&gt;
+  )
+}
+</code></pre>
+<h3 id="stats-polling">Stats Polling</h3>
+<p>The <code>AppContent</code> component polls <code>/api/stats</code> every 30 seconds to keep the sidebar badge up to date:</p>
+<pre><code class="language-jsx">function AppContent() {
+  const [stats, setStats] = useState({
+    total_transactions: 0,
+    pending_review: 0,
+    pending_save: 0,
+    confirmed: 0,
+  })
+
+  const fetchStats = async () =&gt; {
+    try {
+      const res = await fetch('/api/stats')
+      if (res.ok) setStats(await res.json())
+    } catch (err) {
+      console.error('Failed to fetch stats:', err)
+    }
+  }
+
+  useEffect(() =&gt; {
+    fetchStats()
+    const interval = setInterval(fetchStats, 30000)
+    return () =&gt; clearInterval(interval)
+  }, [])
+
+  return (
+    &lt;div className=&quot;app&quot;&gt;
+      &lt;Sidebar pendingCount={stats.pending_review + (stats.pending_save || 0)} /&gt;
+      &lt;main className=&quot;main-content&quot;&gt;
+        &lt;Routes&gt;
+          &lt;Route path=&quot;/&quot; element={&lt;ReviewQueue stats={stats} onUpdate={fetchStats} /&gt;} /&gt;
+          &lt;Route path=&quot;/spending&quot; element={&lt;Spending /&gt;} /&gt;
+          &lt;Route path=&quot;/cash-flow&quot; element={&lt;CashFlow /&gt;} /&gt;
+          &lt;Route path=&quot;/recurring&quot; element={&lt;RecurringMonitor /&gt;} /&gt;
+          &lt;Route path=&quot;/budget&quot; element={&lt;Budget /&gt;} /&gt;
+          &lt;Route path=&quot;/accounts&quot; element={&lt;Accounts onUpdate={fetchStats} /&gt;} /&gt;
+          &lt;Route path=&quot;/investments&quot; element={&lt;Investments /&gt;} /&gt;
+          &lt;Route path=&quot;/insights&quot; element={&lt;Insights /&gt;} /&gt;
+          &lt;Route path=&quot;/data&quot; element={&lt;Data /&gt;} /&gt;
+          &lt;Route path=&quot;/categories&quot; element={&lt;Categories /&gt;} /&gt;
+          &lt;Route path=&quot;/oauth-callback&quot; element={&lt;OAuthCallback /&gt;} /&gt;
+          &lt;Route path=&quot;/settings&quot; element={&lt;SettingsPage /&gt;} /&gt;
+          &lt;Route path=&quot;/deleted-transactions&quot; element={&lt;DeletedTransactions /&gt;} /&gt;
+          &lt;Route path=&quot;/sync-history&quot; element={&lt;SyncHistory /&gt;} /&gt;
+        &lt;/Routes&gt;
+      &lt;/main&gt;
+    &lt;/div&gt;
+  )
+}
+</code></pre>
+<hr>
+<h2 id="52-review-queue-reviewqueuejsx">5.2 Review Queue (<code>ReviewQueue.jsx</code>)</h2>
+<p>The primary workflow page. This is where users spend most of their time categorizing incoming transactions.</p>
+<p><strong>Features (948 lines):</strong></p>
+<ul>
+<li><strong>Pending section</strong>: Transactions awaiting categorization, shown with AI predictions and confidence badges</li>
+<li><strong>Staged section</strong>: Transactions that have been categorized but not yet committed</li>
+<li><strong>CategoryPicker</strong>: A hierarchical dropdown component that shows parent → child categories</li>
+<li><strong>Batch categorization</strong>: Select multiple transactions (with shift-click range selection), pick a category, and categorize all at once</li>
+<li><strong>Sort control</strong>: Toggle between newest-first and oldest-first</li>
+<li><strong>Search</strong>: Filter pending transactions by description text</li>
+<li><strong>Category filter</strong>: Filter to show only transactions predicted for a specific category</li>
+<li><strong>Confidence indicators</strong>: Color-coded badges showing how certain the AI prediction is</li>
+</ul>
+<p>The two-phase review pattern works like this:</p>
+<ol>
+<li>User clicks a pending transaction and picks a category → moves to "staged" (status: <code>pending_save</code>)</li>
+<li>User reviews all staged transactions → clicks "Save All" → committed (status: <code>confirmed</code>)</li>
+</ol>
+<p>This prevents accidental commits and lets users batch their work.</p>
+<hr>
+<h2 id="53-spending-spendingjsx">5.3 Spending (<code>Spending.jsx</code>)</h2>
+<p>Monthly spending analysis with interactive charts.</p>
+<p><strong>Features (502 lines):</strong></p>
+<ul>
+<li><strong>Month selector</strong>: Navigate between months</li>
+<li><strong>Bar chart</strong>: Monthly spending trend using Recharts <code>BarChart</code></li>
+<li><strong>Pie chart</strong>: Category distribution using Recharts <code>PieChart</code></li>
+<li><strong>Category table</strong>: Grouped by parent category (e.g., "Food" expands to show Groceries, Fast Food, Restaurant), with amounts and percentages</li>
+<li><strong>Transaction drill-down</strong>: Click a category row to see individual transactions</li>
+<li><strong>Sparkline trends</strong>: Tiny line charts showing 6-month spending trends per category</li>
+<li><strong>Inline recategorization</strong>: Change a transaction's category directly from the spending view</li>
+</ul>
+<p>The sparkline component is reusable:</p>
+<pre><code class="language-jsx">function Sparkline({ data, width = 60, height = 20, color = '#6c5ce7' }) {
+  if (!data || data.length &lt; 2) return null
+  const max = Math.max(...data)
+  const min = Math.min(...data)
+  const range = max - min || 1
+  const points = data.map((v, i) =&gt;
+    `${(i / (data.length - 1)) * width},${height - ((v - min) / range) * height}`
+  ).join(' ')
+  return (
+    &lt;svg width={width} height={height}&gt;
+      &lt;polyline points={points} fill=&quot;none&quot; stroke={color} strokeWidth=&quot;1.5&quot; /&gt;
+    &lt;/svg&gt;
+  )
+}
+</code></pre>
+<hr>
+<h2 id="54-cash-flow-cashflowjsx">5.4 Cash Flow (<code>CashFlow.jsx</code>)</h2>
+<p>Biweekly cash flow analysis showing income vs. expenses over time.</p>
+<p><strong>Features (868 lines):</strong></p>
+<ul>
+<li><strong>Area chart</strong>: Stacked income (green) and expense (red) areas over biweekly periods using Recharts <code>AreaChart</code></li>
+<li><strong>Year selector</strong>: Switch between years</li>
+<li><strong>Expense drivers</strong>: Top spending categories ranked by amount with sparkline trends</li>
+<li><strong>Income drivers</strong>: Income sources with sparkline trends</li>
+<li><strong>Drill-down</strong>: Click any category to see its transactions for the selected period</li>
+<li><strong>Side-by-side view</strong>: Income and expense breakdowns shown in parallel columns</li>
+<li><strong>Excluded categories</strong>: Section listing categories excluded from cash flow analysis (like balance adjustments)</li>
+</ul>
+<hr>
+<h2 id="55-recurring-monitor-recurringmonitorjsx">5.5 Recurring Monitor (<code>RecurringMonitor.jsx</code>)</h2>
+<p>Tracks subscription and recurring charges across months.</p>
+<p><strong>Features:</strong></p>
+<ul>
+<li><strong>Monthly grid</strong>: Rows are recurring categories, columns are months. Each cell shows the charge amount for that month</li>
+<li><strong>Category filter</strong>: Toggle which recurring categories to show/hide</li>
+<li><strong>Change indicators</strong>: Up/down arrows showing month-to-month changes in amounts</li>
+<li><strong>Net totals</strong>: Row showing net recurring spend per month (inflows minus outflows)</li>
+<li><strong>Transaction drill-down</strong>: Click a cell to see the specific transactions for that category/month</li>
+<li><strong>Inline recategorization</strong>: Move transactions to different categories directly</li>
+</ul>
+<hr>
+<h2 id="56-budget-budgetjsx">5.6 Budget (<code>Budget.jsx</code>)</h2>
+<p>Set monthly budget targets and track progress against actual spending.</p>
+<p><strong>Features (206 lines):</strong></p>
+<ul>
+<li><strong>Budget list</strong>: Shows each budgeted category with a progress bar</li>
+<li><strong>Progress colors</strong>: Green (under 75%), yellow (75–100%), red (over budget)</li>
+<li><strong>Totals row</strong>: Sum of all budgets vs. sum of all spending</li>
+<li><strong>Add/edit budget</strong>: Form to set a budget amount for a category + month</li>
+<li><strong>Month selector</strong>: Navigate between months</li>
+</ul>
+<pre><code class="language-jsx">// Progress bar coloring logic
+const getProgressColor = (percent) =&gt; {
+  if (percent &gt; 100) return '#e74c3c'  // Over budget — red
+  if (percent &gt; 75) return '#f39c12'   // Warning — yellow
+  return '#2ecc71'                     // On track — green
+}
+</code></pre>
+<hr>
+<h2 id="57-accounts-accountsjsx">5.7 Accounts (<code>Accounts.jsx</code>)</h2>
+<p>Bank account management and CSV import.</p>
+<p><strong>Features:</strong></p>
+<ul>
+<li><strong>Account cards</strong>: One card per bank account showing name, institution, connection status, current balance, transaction count, and date coverage</li>
+<li><strong>Plaid Link</strong>: "Connect" button opens the Plaid Link widget for linking bank accounts</li>
+<li><strong>Sync buttons</strong>: Individual sync per account and "Sync All" button</li>
+<li><strong>Balance refresh</strong>: Pull latest balances from Plaid</li>
+<li><strong>Disconnect</strong>: Unlink an account from Plaid (preserves transaction data)</li>
+<li><strong>CSV import</strong>: Drag-and-drop file upload with bank format auto-detection (Discover, SoFi Checking, SoFi Savings, Wells Fargo)</li>
+<li><strong>Sync history link</strong>: Navigation card that opens the dedicated sync history page</li>
+</ul>
+<p>The Plaid Link integration:</p>
+<pre><code class="language-jsx">const { open, ready } = usePlaidLink({
+  token: linkToken,
+  onSuccess: async (publicToken) =&gt; {
+    await fetch('/api/accounts/link/exchange', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        account_id: selectedAccount,
+        public_token: publicToken,
+      }),
+    })
+    fetchAccounts()
+  },
+  onExit: () =&gt; setLinkToken(null),
+})
+</code></pre>
+<hr>
+<h2 id="58-data-browser-datajsx">5.8 Data Browser (<code>Data.jsx</code>)</h2>
+<p>A full-featured transaction browser for exploring and managing all data.</p>
+<p><strong>Features (805 lines):</strong></p>
+<ul>
+<li><strong>Filtering</strong>: By category (hierarchical picker), year, account, source (plaid/csv/archive), and status</li>
+<li><strong>Full-text search</strong>: Debounced search across descriptions and merchant names</li>
+<li><strong>Multi-select</strong>: Checkbox selection with shift-click for range selection</li>
+<li><strong>Bulk categorization</strong>: Categorize multiple selected transactions at once</li>
+<li><strong>Bulk delete</strong>: Delete multiple transactions (with soft-delete to audit log)</li>
+<li><strong>Pagination</strong>: Configurable page size (25, 50, 100, All)</li>
+<li><strong>Sort toggle</strong>: Date ascending/descending</li>
+<li><strong>Status indicators</strong>: Color-coded status badges (pending, staged, confirmed, auto-confirmed)</li>
+<li><strong>Individual delete</strong>: Trash icon per row with confirmation</li>
+</ul>
+<hr>
+<h2 id="59-categories-categoriesjsx">5.9 Categories (<code>Categories.jsx</code>)</h2>
+<p>Manage the two-level category taxonomy.</p>
+<p><strong>Features (713 lines):</strong></p>
+<ul>
+<li><strong>Tree view</strong>: Parent categories expand to show children</li>
+<li><strong>Create</strong>: Add new parent or child categories with custom display names and colors</li>
+<li><strong>Rename</strong>: Inline editing of display names</li>
+<li><strong>Move</strong>: Drag a subcategory to a different parent</li>
+<li><strong>Merge</strong>: Combine two categories (moves all transactions, mappings, rules, and budgets to the target)</li>
+<li><strong>Delete</strong>: Remove empty categories (prevents deletion if transactions exist)</li>
+<li><strong>Toggle recurring</strong>: Mark/unmark categories as recurring</li>
+<li><strong>Expand/collapse all</strong>: Bulk toggle for the tree view</li>
+<li><strong>Portal-based dropdowns</strong>: CategoryPicker uses React portals for proper z-index layering</li>
+</ul>
+<hr>
+<h2 id="510-settings-settingsjsx">5.10 Settings (<code>Settings.jsx</code>)</h2>
+<p>Application configuration.</p>
+<p><strong>Features:</strong></p>
+<ul>
+<li><strong>AI categorization</strong>: Set the Anthropic API key and auto-confirm confidence threshold</li>
+<li><strong>Email notifications</strong>: Configure Gmail integration for transaction alerts (email address, app password, recipient, batch interval)</li>
+<li><strong>Database location</strong>: Shows the path to <code>~/BudgetApp/budget.db</code></li>
+<li><strong>Deleted transactions link</strong>: Navigation card to the dedicated deleted transactions page (with count badge)</li>
+</ul>
+<hr>
+<h2 id="511-deleted-transactions-deletedtransactionsjsx">5.11 Deleted Transactions (<code>DeletedTransactions.jsx</code>)</h2>
+<p>Standalone page for managing the soft-delete audit log.</p>
+<p><strong>Features:</strong></p>
+<ul>
+<li><strong>Table</strong>: Shows deleted transactions with original date, description, amount, account, category, and deletion timestamp</li>
+<li><strong>Restore individual</strong>: Put a deleted transaction back in the main table</li>
+<li><strong>Restore bulk</strong>: Select and restore multiple at once</li>
+<li><strong>Purge individual</strong>: Permanently remove from the audit log (trash icon)</li>
+<li><strong>Clear all</strong>: Permanently remove all deleted transactions with a confirmation dialog</li>
+<li><strong>Back navigation</strong>: Arrow link to Settings</li>
+</ul>
+<hr>
+<h2 id="512-sync-history-synchistoryjsx">5.12 Sync History (<code>SyncHistory.jsx</code>)</h2>
+<p>Standalone page showing the audit trail of all Plaid sync operations.</p>
+<p><strong>Features:</strong></p>
+<ul>
+<li><strong>Date grouping</strong>: Sync logs grouped by date with separator rows</li>
+<li><strong>Summary header</strong>: Total successful/failed sync counts</li>
+<li><strong>Status icons</strong>: Checkmark for success, X for error, clock for pending</li>
+<li><strong>Trigger badges</strong>: Color-coded labels (scheduled, manual, initial, retry)</li>
+<li><strong>Change metrics</strong>: Added/modified/removed transaction counts per sync</li>
+<li><strong>Duration</strong>: How long each sync took</li>
+<li><strong>Error messages</strong>: Displayed for failed syncs</li>
+<li><strong>Refresh button</strong>: Manually reload the sync history</li>
+<li><strong>Back navigation</strong>: Arrow link to Accounts</li>
+</ul>
+<hr>
+<h2 id="513-css-styling-frontendsrcstylescss">5.13 CSS Styling (<code>frontend/src/styles.css</code>)</h2>
+<p>The app uses a dark theme with CSS custom properties (no CSS framework). The stylesheet is approximately 1500+ lines covering all components.</p>
+<h3 id="design-system">Design System</h3>
+<pre><code class="language-css">:root {
+  --bg-primary: #0f1117;
+  --bg-secondary: #1a1d27;
+  --bg-tertiary: #242836;
+  --text-primary: #e4e6eb;
+  --text-secondary: #8b8fa3;
+  --accent: #6c5ce7;
+  --accent-hover: #5a4bd1;
+  --green: #2ecc71;
+  --red: #e74c3c;
+  --yellow: #f39c12;
+  --border: #2a2e3d;
+}
+</code></pre>
+<h3 id="layout">Layout</h3>
+<pre><code class="language-css">.app {
+  display: flex;
+  min-height: 100vh;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.sidebar {
+  width: 220px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  position: fixed;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.main-content {
+  flex: 1;
+  margin-left: 220px;
+  padding: 24px 32px;
+}
+</code></pre>
+<h3 id="reusable-component-classes">Reusable Component Classes</h3>
+<p>The CSS follows a consistent naming convention:</p>
+<ul>
+<li><code>.card</code> — Base container with border, radius, and padding</li>
+<li><code>.data-table</code> — Styled tables with hover effects and striped rows</li>
+<li><code>.stats-row</code> / <code>.stat-card</code> — Stat card grid layouts</li>
+<li><code>.badge</code> — Small count badges (used in sidebar and tables)</li>
+<li><code>.btn-primary</code> / <code>.btn-secondary</code> / <code>.btn-danger</code> — Button variants</li>
+<li><code>.btn-danger-outline</code> — Transparent button with red border (for destructive actions)</li>
+<li><code>.empty-state</code> — Centered placeholder when no data exists</li>
+<li><code>.settings-link-card</code> — Clickable navigation cards (used in Settings and Accounts)</li>
+</ul>
+<h3 id="chart-integration">Chart Integration</h3>
+<p>Recharts components are styled with CSS overrides:</p>
+<pre><code class="language-css">.recharts-cartesian-axis-tick-value {
+  fill: var(--text-secondary);
+  font-size: 12px;
+}
+
+.recharts-tooltip-wrapper {
+  outline: none;
+}
+</code></pre>
+<hr>
+<h2 id="514-entry-point-frontendsrcmainjsx">5.14 Entry Point (<code>frontend/src/main.jsx</code>)</h2>
+<pre><code class="language-jsx">import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App'
+import './styles.css'
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  &lt;React.StrictMode&gt;
+    &lt;App /&gt;
+  &lt;/React.StrictMode&gt;
+)
+</code></pre>
+<hr>
+<h2 id="whats-next">What's Next</h2>
+<p>With the full frontend built, Part 6 adds advanced features: AI-powered financial insights, investment portfolio tracking, the background sync scheduler, and the sync daemon for scheduled background updates.</p>
+<p>→ <a href="06-advanced-features.md">Part 6: Advanced Features</a></p>
+      </div>
+      <div class="docs-nav-footer">
+        <a href="04-categorization-engine.html" class="docs-nav-link prev">
+  <span class="label">&larr; Previous</span>
+  <span class="title">Categorization Engine</span>
+</a>
+        <a href="06-advanced-features.html" class="docs-nav-link next">
+  <span class="label">Next &rarr;</span>
+  <span class="title">Advanced Features</span>
+</a>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

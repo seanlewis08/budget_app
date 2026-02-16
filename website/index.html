@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Budget App — Personal Finance Tracker with AI</title>
+  <meta name="description" content="A private, local-first personal finance tracker with AI-powered categorization, Plaid bank syncing, and investment tracking. Built with React, FastAPI, and Electron." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- ─── Navigation ─── -->
+  <nav class="nav" id="nav">
+    <div class="nav-inner">
+      <a href="#" class="nav-logo">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+          <rect width="28" height="28" rx="6" fill="#6c5ce7"/>
+          <path d="M7 20V8h4.5c2.5 0 4 1.2 4 3.2 0 1.5-.9 2.5-2.2 2.9l2.8 5.9h-2.8l-2.4-5.3H9.4V20H7zm2.4-7.2h2c1.2 0 1.8-.6 1.8-1.5s-.6-1.5-1.8-1.5h-2v3z" fill="white"/>
+          <circle cx="20" cy="20" r="4" fill="#a29bfe"/>
+        </svg>
+        <span>Budget App</span>
+      </a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#screenshots">Screenshots</a>
+        <a href="#how-it-works">How It Works</a>
+        <a href="#tech-stack">Tech Stack</a>
+        <a href="docs/">Docs</a>
+        <a href="https://github.com/seanlewis08/budget-app" class="nav-cta" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          GitHub
+        </a>
+      </div>
+      <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Menu">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ─── Hero ─── -->
+  <header class="hero">
+    <div class="hero-glow"></div>
+    <div class="hero-content">
+      <div class="hero-badge">Local-first &middot; Privacy-focused &middot; AI-powered</div>
+      <h1>Your finances,<br/><span class="gradient-text">your machine.</span></h1>
+      <p class="hero-subtitle">
+        A personal finance tracker that lives entirely on your computer.
+        AI-powered categorization, real-time bank syncing via Plaid,
+        investment tracking, and financial insights &mdash; all without sending
+        your data to the cloud.
+      </p>
+      <div class="hero-actions">
+        <a href="https://github.com/seanlewis08/budget-app" class="btn btn-primary" target="_blank" rel="noopener">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          View on GitHub
+        </a>
+        <a href="docs/" class="btn btn-secondary">
+          Read the Docs
+        </a>
+      </div>
+      <div class="hero-stats">
+        <div class="hero-stat">
+          <strong>13+</strong>
+          <span>Pages</span>
+        </div>
+        <div class="hero-stat-divider"></div>
+        <div class="hero-stat">
+          <strong>80+</strong>
+          <span>Categories</span>
+        </div>
+        <div class="hero-stat-divider"></div>
+        <div class="hero-stat">
+          <strong>3-Tier</strong>
+          <span>AI Engine</span>
+        </div>
+        <div class="hero-stat-divider"></div>
+        <div class="hero-stat">
+          <strong>100%</strong>
+          <span>Local Data</span>
+        </div>
+      </div>
+    </div>
+    <!-- Hero screenshot placeholder -->
+    <div class="hero-screenshot">
+      <div class="screenshot-placeholder" data-label="App Screenshot — Review Queue">
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="18" rx="2"/><path d="M2 8h20"/><circle cx="5" cy="5.5" r=".75" fill="currentColor"/><circle cx="7.5" cy="5.5" r=".75" fill="currentColor"/><circle cx="10" cy="5.5" r=".75" fill="currentColor"/><path d="M6 13h4M6 16h8M14 13h4"/></svg>
+        <p>Drop your screenshot here<br/><code>website/screenshots/hero.png</code></p>
+      </div>
+    </div>
+  </header>
+
+  <!-- ─── Features ─── -->
+  <section class="section" id="features">
+    <div class="section-inner">
+      <div class="section-header">
+        <h2>Everything you need to take control of your money</h2>
+        <p>Built as a full-stack desktop app with a React frontend, FastAPI backend, and SQLite database &mdash; all running locally on your Mac.</p>
+      </div>
+      <div class="features-grid">
+
+        <div class="feature-card">
+          <div class="feature-icon" style="background: rgba(108,92,231,0.15); color: #6c5ce7;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 014 4c0 1.1-.9 2-2 2h-4a2 2 0 01-2-2 4 4 0 014-4z"/><path d="M16 6v8a6 6 0 01-12 0V6"/><path d="M8 12h8"/></svg>
+          </div>
+          <h3>AI-Powered Categorization</h3>
+          <p>3-tier engine: amount rules catch exact matches, merchant mappings learn from your reviews, and Claude AI handles everything else. Your categories get smarter over time.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon" style="background: rgba(46,204,113,0.15); color: #2ecc71;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M4 9h16M9 4v16"/><path d="M14 12l2 2 4-4"/></svg>
+          </div>
+          <h3>Bank Syncing via Plaid</h3>
+          <p>Connect your bank accounts and credit cards with Plaid. Transactions sync automatically every 4 hours with cursor-based incremental updates &mdash; no duplicate imports.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon" style="background: rgba(243,156,18,0.15); color: #f39c12;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+          </div>
+          <h3>Spending Analytics</h3>
+          <p>Interactive charts show monthly spending by category, cash flow trends, and drill-down transaction details. See exactly where your money goes with sparkline trends.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon" style="background: rgba(231,76,60,0.15); color: #e74c3c;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+          </div>
+          <h3>Budget Tracking</h3>
+          <p>Set monthly budget targets per category and track progress with color-coded progress bars. Green when on track, yellow as you approach, red when over budget.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon" style="background: rgba(52,152,219,0.15); color: #3498db;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          </div>
+          <h3>Investment Portfolio</h3>
+          <p>Track your investment holdings with live price updates via yfinance. View performance charts, asset allocation, and transaction history across all brokerage accounts.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon" style="background: rgba(162,155,254,0.15); color: #a29bfe;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><path d="M8 10h8M8 14h4"/></svg>
+          </div>
+          <h3>Financial Insights Chat</h3>
+          <p>Chat with Claude about your finances. Get personalized analysis of spending patterns, savings opportunities, and actionable recommendations with streaming responses.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon" style="background: rgba(150,206,180,0.15); color: #96ceb4;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+          </div>
+          <h3>Privacy First</h3>
+          <p>Your data never leaves your machine. The SQLite database lives in ~/BudgetApp, Plaid tokens are Fernet-encrypted at rest, and there's no cloud backend or telemetry.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon" style="background: rgba(187,143,206,0.15); color: #bb8fce;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+          </div>
+          <h3>Recurring Monitor</h3>
+          <p>Monthly grid tracking every subscription and recurring charge. See at a glance which services you're paying for, spot price increases, and identify forgotten subscriptions.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Screenshots ─── -->
+  <section class="section section-dark" id="screenshots">
+    <div class="section-inner">
+      <div class="section-header">
+        <h2>See it in action</h2>
+        <p>A dark-themed, native desktop experience built with Electron.</p>
+      </div>
+      <div class="screenshots-grid">
+        <div class="screenshot-card">
+          <div class="screenshot-placeholder" data-label="Review Queue">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+            <p><code>screenshots/review-queue.png</code></p>
+          </div>
+          <h4>Review Queue</h4>
+          <p>Categorize incoming transactions with AI predictions, batch selection, and two-phase commit.</p>
+        </div>
+        <div class="screenshot-card">
+          <div class="screenshot-placeholder" data-label="Spending">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+            <p><code>screenshots/spending.png</code></p>
+          </div>
+          <h4>Spending Analysis</h4>
+          <p>Monthly breakdowns with bar charts, pie charts, and drill-down transaction lists.</p>
+        </div>
+        <div class="screenshot-card">
+          <div class="screenshot-placeholder" data-label="Cash Flow">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            <p><code>screenshots/cash-flow.png</code></p>
+          </div>
+          <h4>Cash Flow</h4>
+          <p>Biweekly income vs. expenses with area charts and top spending/income drivers.</p>
+        </div>
+        <div class="screenshot-card">
+          <div class="screenshot-placeholder" data-label="Investments">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+            <p><code>screenshots/investments.png</code></p>
+          </div>
+          <h4>Investment Portfolio</h4>
+          <p>Holdings, performance charts, allocation breakdown, and live price tracking.</p>
+        </div>
+        <div class="screenshot-card">
+          <div class="screenshot-placeholder" data-label="Insights">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+            <p><code>screenshots/insights.png</code></p>
+          </div>
+          <h4>AI Insights</h4>
+          <p>Chat with Claude about your finances. Streaming analysis with follow-up questions.</p>
+        </div>
+        <div class="screenshot-card">
+          <div class="screenshot-placeholder" data-label="Accounts">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="4" width="22" height="16" rx="2"/><path d="M1 10h22"/></svg>
+            <p><code>screenshots/accounts.png</code></p>
+          </div>
+          <h4>Accounts</h4>
+          <p>Manage bank connections, sync status, balances, and CSV imports.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── How It Works ─── -->
+  <section class="section" id="how-it-works">
+    <div class="section-inner">
+      <div class="section-header">
+        <h2>How the categorization engine works</h2>
+        <p>A 3-tier priority cascade that learns from every review. The more you use it, the less you need to.</p>
+      </div>
+      <div class="tiers">
+
+        <div class="tier-card">
+          <div class="tier-number">1</div>
+          <div class="tier-content">
+            <h3>Amount Rules</h3>
+            <p>Exact amount matching for merchants like Apple and Venmo that charge different amounts for different services. <strong>$15.89 from APPLE.COM/BILL</strong> always maps to HBO Max.</p>
+            <div class="tier-meta">
+              <span class="tier-badge tier-badge-green">Auto-confirmed</span>
+              <span class="tier-badge">Confidence: 1.0</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="tier-connector">
+          <svg width="24" height="40" viewBox="0 0 24 40"><path d="M12 0v40" stroke="#2a2e3d" stroke-width="2" stroke-dasharray="4 4"/><path d="M6 34l6 6 6-6" stroke="#6c5ce7" stroke-width="2" fill="none"/></svg>
+          <span>miss</span>
+        </div>
+
+        <div class="tier-card">
+          <div class="tier-number">2</div>
+          <div class="tier-content">
+            <h3>Merchant Mappings</h3>
+            <p>Regex pattern matching against 200+ known merchants, ordered by confidence. Confidence increases each time you confirm &mdash; reaching auto-confirm threshold at 3+.</p>
+            <div class="tier-meta">
+              <span class="tier-badge tier-badge-yellow">Auto or Review</span>
+              <span class="tier-badge">50+ seed patterns</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="tier-connector">
+          <svg width="24" height="40" viewBox="0 0 24 40"><path d="M12 0v40" stroke="#2a2e3d" stroke-width="2" stroke-dasharray="4 4"/><path d="M6 34l6 6 6-6" stroke="#6c5ce7" stroke-width="2" fill="none"/></svg>
+          <span>miss</span>
+        </div>
+
+        <div class="tier-card">
+          <div class="tier-number">3</div>
+          <div class="tier-content">
+            <h3>Claude AI</h3>
+            <p>For unknown merchants, Claude Haiku categorizes using few-shot examples from your recent confirmed transactions. AI predictions always go to the review queue.</p>
+            <div class="tier-meta">
+              <span class="tier-badge tier-badge-purple">Pending review</span>
+              <span class="tier-badge">Few-shot learning</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Tech Stack ─── -->
+  <section class="section section-dark" id="tech-stack">
+    <div class="section-inner">
+      <div class="section-header">
+        <h2>Built with</h2>
+        <p>Modern, well-supported technologies with no vendor lock-in.</p>
+      </div>
+      <div class="stack-grid">
+        <div class="stack-item">
+          <div class="stack-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="#61dafb"><path d="M12 10.11c1.03 0 1.87.84 1.87 1.89 0 1-.84 1.85-1.87 1.85S10.13 13 10.13 12c0-1.05.84-1.89 1.87-1.89M7.37 20c.63.38 2.01-.2 3.6-1.7-.52-.59-1.03-1.23-1.51-1.9a22.7 22.7 0 01-2.4-.36c-.51 2.14-.32 3.61.31 3.96m.71-5.74l-.29-.51c-.11.29-.22.58-.29.86.27.06.57.11.88.16l-.3-.51m6.54-.76l.81-1.5-.81-1.5c-.3-.53-.62-1-.91-1.47C13.17 9 12.6 9 12 9c-.6 0-1.17 0-1.71.03-.29.47-.61.94-.91 1.47L8.57 12l.81 1.5c.3.53.62 1 .91 1.47.54.03 1.11.03 1.71.03.6 0 1.17 0 1.71-.03.29-.47.61-.94.91-1.47M12 6.78c-.19.22-.39.45-.59.72h1.18c-.2-.27-.4-.5-.59-.72m0 10.44c.19-.22.39-.45.59-.72h-1.18c.2.27.4.5.59.72M16.62 4c-.62-.38-2 .2-3.59 1.7.52.59 1.03 1.23 1.51 1.9.82.08 1.63.2 2.4.36.51-2.14.32-3.61-.32-3.96m-.7 5.74l.29.51c.11-.29.22-.58.29-.86-.27-.06-.57-.11-.88-.16l.3.51m1.45-7.05c1.47.84 1.63 3.05 1.01 5.63 2.54.75 4.37 1.99 4.37 3.68 0 1.69-1.83 2.93-4.37 3.68.62 2.58.46 4.79-1.01 5.63-1.46.84-3.45-.12-5.37-1.95-1.92 1.83-3.91 2.79-5.38 1.95-1.46-.84-1.62-3.05-1-5.63-2.54-.75-4.37-1.99-4.37-3.68 0-1.69 1.83-2.93 4.37-3.68-.62-2.58-.46-4.79 1-5.63 1.47-.84 3.46.12 5.38 1.95 1.92-1.83 3.91-2.79 5.37-1.95M17.08 12c.34.75.64 1.5.89 2.26 2.1-.63 3.28-1.53 3.28-2.26 0-.73-1.18-1.63-3.28-2.26-.25.76-.55 1.51-.89 2.26M6.92 12c-.34-.75-.64-1.5-.89-2.26-2.1.63-3.28 1.53-3.28 2.26 0 .73 1.18 1.63 3.28 2.26.25-.76.55-1.51.89-2.26m9 2.26l-.3.51c.31-.05.61-.1.88-.16-.07-.28-.18-.57-.29-.86l-.29.51m-2.89 4.04c1.59 1.5 2.97 2.08 3.59 1.7.64-.35.83-1.82.32-3.96-.77.16-1.58.28-2.4.36-.48.67-.99 1.31-1.51 1.9M8.08 9.74l.3-.51c-.31.05-.61.1-.88.16.07.28.18.57.29.86l.29-.51m2.89-4.04C9.38 4.2 8 3.62 7.37 4c-.63.35-.82 1.82-.31 3.96a22.7 22.7 0 012.4-.36c.48-.67.99-1.31 1.51-1.9z"/></svg>
+          </div>
+          <h4>React 18</h4>
+          <p>Frontend UI</p>
+        </div>
+        <div class="stack-item">
+          <div class="stack-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="#009688"><path d="M12 2L2 7v10l10 5 10-5V7L12 2zm0 2.18l7.15 3.57L12 11.32 4.85 7.75 12 4.18zM4 9.04l7 3.5V19.5l-7-3.5V9.04zm9 10.46v-6.96l7-3.5v6.96l-7 3.5z"/></svg>
+          </div>
+          <h4>FastAPI</h4>
+          <p>Python backend</p>
+        </div>
+        <div class="stack-item">
+          <div class="stack-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="#0f80cc"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.94-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+          </div>
+          <h4>SQLite</h4>
+          <p>Local database</p>
+        </div>
+        <div class="stack-item">
+          <div class="stack-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="#47848f"><path d="M12 2L2 7l1.63.81L12 12l8.37-4.19L22 7 12 2zM2 17l10 5 10-5-1.63-.81L12 20l-8.37-4.19L2 17zM2 12l10 5 10-5-1.63-.81L12 15l-8.37-4.19L2 12z"/></svg>
+          </div>
+          <h4>Electron</h4>
+          <p>Desktop app</p>
+        </div>
+        <div class="stack-item">
+          <div class="stack-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="#cc9b7a"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 18a8 8 0 110-16 8 8 0 010 16zm-1-13h2v6h-2zm0 8h2v2h-2z"/></svg>
+          </div>
+          <h4>Claude AI</h4>
+          <p>Categorization + Insights</p>
+        </div>
+        <div class="stack-item">
+          <div class="stack-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="#5ebc6e"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h4>Plaid</h4>
+          <p>Bank syncing</p>
+        </div>
+        <div class="stack-item">
+          <div class="stack-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="#f0db4f"><path d="M3 3h18v18H3V3zm16.525 13.707c-.131-.821-.666-1.511-2.252-2.155-.552-.259-1.165-.438-1.349-.854-.068-.248-.078-.382-.034-.529.113-.484.687-.629 1.137-.495.293.086.567.326.733.696.775-.507.775-.507 1.316-.844-.2-.308-.303-.463-.442-.615-.485-.546-1.135-.828-2.184-.797l-.543.068c-.522.135-.997.406-1.276.793-.833 1.01-.594 2.779.42 3.509 1.004.74 2.478.901 2.666 1.596.184.84-.624 1.11-1.413.955-.59-.126-.917-.492-1.272-1.128l-1.372.787c.166.37.36.531.649.855 1.391 1.407 4.87 1.335 5.494-.78.022-.078.172-.578.034-1.349l-.008-.033zM12.86 13.062l-.008.008c-.003 0-.008.007-.008.007h.016zM12.86 13.062L11.477 13c-.022.013-.042.03-.065.042v7.032h1.604V16.03c0-.453.022-.874.064-1.048.106-.51.459-.885 1.025-.885.72 0 .998.58.998 1.43v4.536h1.604v-4.904c0-1.82-.967-2.697-2.254-2.697-.822 0-1.285.335-1.593.65z"/></svg>
+          </div>
+          <h4>SQLAlchemy</h4>
+          <p>ORM</p>
+        </div>
+        <div class="stack-item">
+          <div class="stack-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="#ff6384"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+          </div>
+          <h4>Recharts</h4>
+          <p>Data visualization</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Docs ─── -->
+  <section class="section" id="docs">
+    <div class="section-inner">
+      <div class="section-header">
+        <h2>Build it from scratch</h2>
+        <p>A comprehensive 7-part walkthrough documenting how the entire project was built, from first <code>git init</code> to packaged Electron app.</p>
+      </div>
+      <div class="docs-grid">
+        <a href="docs/01-project-setup.html" class="doc-card">
+          <span class="doc-number">01</span>
+          <div>
+            <h4>Project Setup &amp; Foundation</h4>
+            <p>Repository structure, dependencies, environment config, and the dev launcher.</p>
+          </div>
+        </a>
+        <a href="docs/02-database-and-models.html" class="doc-card">
+          <span class="doc-number">02</span>
+          <div>
+            <h4>Database Models &amp; Backend Core</h4>
+            <p>SQLite setup, all ORM models, migrations, and the FastAPI skeleton.</p>
+          </div>
+        </a>
+        <a href="docs/03-plaid-integration.html" class="doc-card">
+          <span class="doc-number">03</span>
+          <div>
+            <h4>Plaid Integration &amp; Accounts</h4>
+            <p>Bank linking, encrypted tokens, cursor-based transaction sync.</p>
+          </div>
+        </a>
+        <a href="docs/04-categorization-engine.html" class="doc-card">
+          <span class="doc-number">04</span>
+          <div>
+            <h4>Transaction Processing &amp; Categorization</h4>
+            <p>The 3-tier categorization engine, review workflow, CSV import.</p>
+          </div>
+        </a>
+        <a href="docs/05-frontend-react.html" class="doc-card">
+          <span class="doc-number">05</span>
+          <div>
+            <h4>Frontend &amp; React UI</h4>
+            <p>All 13+ pages, routing, charts, and dark theme CSS.</p>
+          </div>
+        </a>
+        <a href="docs/06-advanced-features.html" class="doc-card">
+          <span class="doc-number">06</span>
+          <div>
+            <h4>Advanced Features</h4>
+            <p>AI insights, investments, background sync, and the sync daemon.</p>
+          </div>
+        </a>
+        <a href="docs/07-electron-and-deployment.html" class="doc-card">
+          <span class="doc-number">07</span>
+          <div>
+            <h4>Electron Desktop App &amp; Deployment</h4>
+            <p>Native window, backend manager, build pipeline, and packaging.</p>
+          </div>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Footer ─── -->
+  <footer class="footer">
+    <div class="footer-inner">
+      <div class="footer-left">
+        <a href="#" class="nav-logo">
+          <svg width="24" height="24" viewBox="0 0 28 28" fill="none">
+            <rect width="28" height="28" rx="6" fill="#6c5ce7"/>
+            <path d="M7 20V8h4.5c2.5 0 4 1.2 4 3.2 0 1.5-.9 2.5-2.2 2.9l2.8 5.9h-2.8l-2.4-5.3H9.4V20H7zm2.4-7.2h2c1.2 0 1.8-.6 1.8-1.5s-.6-1.5-1.8-1.5h-2v3z" fill="white"/>
+            <circle cx="20" cy="20" r="4" fill="#a29bfe"/>
+          </svg>
+          <span>Budget App</span>
+        </a>
+        <p>A personal finance tracker that respects your privacy.</p>
+      </div>
+      <div class="footer-right">
+        <div class="footer-col">
+          <h5>Project</h5>
+          <a href="#features">Features</a>
+          <a href="docs/">Documentation</a>
+          <a href="https://github.com/seanlewis08/budget-app" target="_blank" rel="noopener">Source Code</a>
+        </div>
+        <div class="footer-col">
+          <h5>Built With</h5>
+          <a href="https://react.dev" target="_blank" rel="noopener">React</a>
+          <a href="https://fastapi.tiangolo.com" target="_blank" rel="noopener">FastAPI</a>
+          <a href="https://www.electronjs.org" target="_blank" rel="noopener">Electron</a>
+        </div>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>Built by Sean Lewis</p>
+    </div>
+  </footer>
+
+  <!-- ─── Scroll behavior ─── -->
+  <script>
+    // Navbar background on scroll
+    const nav = document.getElementById('nav');
+    window.addEventListener('scroll', () => {
+      nav.classList.toggle('scrolled', window.scrollY > 40);
+    });
+
+    // Smooth scroll for anchor links
+    document.querySelectorAll('a[href^="#"]').forEach(a => {
+      a.addEventListener('click', e => {
+        e.preventDefault();
+        const target = document.querySelector(a.getAttribute('href'));
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        // Close mobile menu
+        document.querySelector('.nav-links').classList.remove('open');
+      });
+    });
+
+    // Intersection Observer for fade-in animations
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+        }
+      });
+    }, { threshold: 0.1 });
+
+    document.querySelectorAll('.feature-card, .screenshot-card, .tier-card, .doc-card, .stack-item').forEach(el => {
+      el.classList.add('animate-in');
+      observer.observe(el);
+    });
+  </script>
+</body>
+</html>

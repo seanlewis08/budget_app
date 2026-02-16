@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Category, Transaction
+from ..models import Category, Transaction, MerchantMapping, AmountRule, Budget
 
 router = APIRouter()
 
@@ -224,6 +224,82 @@ def move_category(
         "category": category.display_name,
         "from": old_parent.display_name if old_parent else None,
         "to": new_parent.display_name,
+    }
+
+
+class CategoryMerge(BaseModel):
+    target_short_desc: str
+
+
+@router.post("/{short_desc}/merge")
+def merge_category(
+    short_desc: str,
+    data: CategoryMerge,
+    db: Session = Depends(get_db),
+):
+    """Merge a subcategory into another. All transactions, mappings, rules, and budgets are reassigned."""
+    source = db.query(Category).filter(Category.short_desc == short_desc).first()
+    if not source:
+        raise HTTPException(status_code=404, detail=f"Source category '{short_desc}' not found")
+    if not source.parent_id:
+        raise HTTPException(status_code=400, detail="Cannot merge a parent category — only subcategories can be merged")
+
+    target = db.query(Category).filter(Category.short_desc == data.target_short_desc).first()
+    if not target:
+        raise HTTPException(status_code=404, detail=f"Target category '{data.target_short_desc}' not found")
+    if not target.parent_id:
+        raise HTTPException(status_code=400, detail="Cannot merge into a parent category — target must be a subcategory")
+    if source.id == target.id:
+        raise HTTPException(status_code=400, detail="Cannot merge a category into itself")
+
+    # 1. Reassign transactions
+    txn_count = db.query(Transaction).filter(
+        Transaction.category_id == source.id
+    ).update({Transaction.category_id: target.id}, synchronize_session="fetch")
+
+    # 2. Reassign predicted categories
+    pred_count = db.query(Transaction).filter(
+        Transaction.predicted_category_id == source.id
+    ).update({Transaction.predicted_category_id: target.id}, synchronize_session="fetch")
+
+    # 3. Reassign merchant mappings
+    map_count = db.query(MerchantMapping).filter(
+        MerchantMapping.category_id == source.id
+    ).update({MerchantMapping.category_id: target.id}, synchronize_session="fetch")
+
+    # 4. Reassign amount rules
+    rule_count = db.query(AmountRule).filter(
+        AmountRule.category_id == source.id
+    ).update({AmountRule.category_id: target.id}, synchronize_session="fetch")
+
+    # 5. Handle budgets — merge amounts if same month exists in target
+    source_budgets = db.query(Budget).filter(Budget.category_id == source.id).all()
+    budget_count = 0
+    for sb in source_budgets:
+        existing = db.query(Budget).filter(
+            Budget.category_id == target.id,
+            Budget.month == sb.month,
+        ).first()
+        if existing:
+            existing.amount += sb.amount
+            db.delete(sb)
+        else:
+            sb.category_id = target.id
+        budget_count += 1
+
+    # 6. Delete source category
+    db.delete(source)
+    db.commit()
+
+    return {
+        "status": "merged",
+        "source": source.display_name,
+        "target": target.display_name,
+        "merged_transactions": txn_count,
+        "merged_predictions": pred_count,
+        "merged_mappings": map_count,
+        "merged_rules": rule_count,
+        "merged_budgets": budget_count,
     }
 
 

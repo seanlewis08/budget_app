@@ -94,7 +94,7 @@ def sync_all():
 
         for account in accounts:
             try:
-                result = plaid.sync_transactions(account, db)
+                result = plaid.sync_transactions(account, db, trigger="scheduled")
                 results[account.name] = result
                 logger.info(
                     f"  {account.name}: +{result['added']} new, "

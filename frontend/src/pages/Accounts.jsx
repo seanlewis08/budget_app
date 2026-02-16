@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { usePlaidLink } from 'react-plaid-link'
+import { useNavigate } from 'react-router-dom'
 import {
   Upload, FileText, CheckCircle, AlertCircle,
   RefreshCw, Link2, Unlink, Wifi, WifiOff, DollarSign, Clock,
   CreditCard, Building2, PiggyBank, Landmark, Calendar, Database,
+  History, ChevronRight,
 } from 'lucide-react'
 
 // Icon map for account types
@@ -27,16 +29,29 @@ function formatCurrency(amount) {
 
 function timeAgo(dateStr) {
   if (!dateStr) return 'Never'
-  const date = new Date(dateStr)
+  // Backend stores UTC times without a Z suffix — append it so the browser
+  // interprets the timestamp correctly instead of treating it as local time.
+  const normalized = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z'
+  const date = new Date(normalized)
   const now = new Date()
   const diffMs = now - date
   const diffMins = Math.floor(diffMs / 60000)
-  if (diffMins < 1) return 'Just now'
-  if (diffMins < 60) return `${diffMins}m ago`
-  const diffHours = Math.floor(diffMins / 60)
-  if (diffHours < 24) return `${diffHours}h ago`
-  const diffDays = Math.floor(diffHours / 24)
-  return `${diffDays}d ago`
+  let relative
+  if (diffMins < 1) relative = 'Just now'
+  else if (diffMins < 60) relative = `${diffMins}m ago`
+  else {
+    const diffHours = Math.floor(diffMins / 60)
+    if (diffHours < 24) relative = `${diffHours}h ago`
+    else {
+      const diffDays = Math.floor(diffHours / 24)
+      relative = `${diffDays}d ago`
+    }
+  }
+  // Show actual time alongside relative
+  const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+  const dateFormatted = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  if (diffMins < 1440) return `${relative} (${timeStr})`
+  return `${relative} (${dateFormatted} ${timeStr})`
 }
 
 function formatShortDate(dateStr) {
@@ -339,6 +354,7 @@ function AccountCard({ account, onRefresh }) {
 
 
 export default function Accounts({ onUpdate }) {
+  const navigate = useNavigate()
   const [accounts, setAccounts] = useState([])
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
@@ -478,6 +494,24 @@ export default function Accounts({ onUpdate }) {
             ))}
           </div>
         )}
+      </div>
+
+      {/* Sync History Link */}
+      <div
+        className="card settings-link-card"
+        style={{ cursor: 'pointer' }}
+        onClick={() => navigate('/sync-history')}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <History size={16} />
+            <span style={{ fontWeight: 500 }}>Sync History</span>
+          </div>
+          <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />
+        </div>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 0 26px' }}>
+          View a log of all sync operations across your accounts
+        </p>
       </div>
 
       {/* CSV Import */}

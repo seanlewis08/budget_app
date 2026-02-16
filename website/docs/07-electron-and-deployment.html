@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Electron & Deployment — Budget App Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../styles.css" />
+  <link rel="stylesheet" href="docs.css" />
+</head>
+<body>
+  <nav class="nav scrolled" id="nav">
+    <div class="nav-inner">
+      <a href="../" class="nav-logo">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#6c5ce7"/><path d="M7 20V8h4.5c2.5 0 4 1.2 4 3.2 0 1.5-.9 2.5-2.2 2.9l2.8 5.9h-2.8l-2.4-5.3H9.4V20H7zm2.4-7.2h2c1.2 0 1.8-.6 1.8-1.5s-.6-1.5-1.8-1.5h-2v3z" fill="white"/><circle cx="20" cy="20" r="4" fill="#a29bfe"/></svg>
+        <span>Budget App</span>
+      </a>
+      <div class="nav-links">
+        <a href="../#features">Features</a>
+        <a href="./">Docs</a>
+        <a href="https://github.com/seanlewis08/budget-app" class="nav-cta" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          GitHub
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="docs-layout">
+    <aside class="docs-sidebar">
+      <h3>Walkthrough</h3>
+      <nav class="docs-nav">
+        <a href="01-project-setup.html">
+          <span class="docs-nav-num">01</span>
+          Project Setup & Foundation
+        </a>
+        <a href="02-database-and-models.html">
+          <span class="docs-nav-num">02</span>
+          Database Models & Backend Core
+        </a>
+        <a href="03-plaid-integration.html">
+          <span class="docs-nav-num">03</span>
+          Plaid Integration & Accounts
+        </a>
+        <a href="04-categorization-engine.html">
+          <span class="docs-nav-num">04</span>
+          Categorization Engine
+        </a>
+        <a href="05-frontend-react.html">
+          <span class="docs-nav-num">05</span>
+          Frontend & React UI
+        </a>
+        <a href="06-advanced-features.html">
+          <span class="docs-nav-num">06</span>
+          Advanced Features
+        </a>
+        <a href="07-electron-and-deployment.html" class="active">
+          <span class="docs-nav-num">07</span>
+          Electron & Deployment
+        </a>
+      </nav>
+    </aside>
+
+    <main class="docs-content">
+      <div class="md-content">
+<h1 id="part-7-electron-desktop-app-deployment">Part 7 — Electron Desktop App &amp; Deployment</h1>
+<p>This part covers wrapping the FastAPI backend and React frontend into a native desktop application using Electron, and the build/packaging process for distribution.</p>
+<hr>
+<h2 id="71-architecture">7.1 Architecture</h2>
+<p>In production, the Electron app bundles everything into a single package:</p>
+<pre><code>Budget App.app
+  └── Contents/
+      └── Resources/
+          ├── backend/
+          │   └── budget-app-backend  (PyInstaller binary)
+          ├── frontend/
+          │   └── dist/               (Vite build output)
+          └── app/
+              ├── electron/
+              │   ├── main.js
+              │   ├── backend-manager.js
+              │   └── preload.js
+              └── package.json
+</code></pre>
+<p>In development, the three processes run separately:</p>
+<ul>
+<li>Backend: <code>uv run uvicorn backend.main:app --port 8000 --reload</code></li>
+<li>Frontend: <code>cd frontend &amp;&amp; npm run dev</code> (Vite dev server on port 5173)</li>
+<li>Electron: <code>NODE_ENV=development npx electron .</code> (loads from Vite)</li>
+</ul>
+<p>The <code>start.sh</code> script handles all three (see Part 1).</p>
+<hr>
+<h2 id="72-electron-main-process-electronmainjs">7.2 Electron Main Process (<code>electron/main.js</code>)</h2>
+<p>The main process creates the browser window and manages the backend lifecycle:</p>
+<pre><code class="language-javascript">const { app, BrowserWindow, shell } = require('electron')
+const path = require('path')
+const { startBackend, stopBackend, isBackendReady } = require('./backend-manager')
+
+app.setName('Budget App')
+
+let mainWindow = null
+const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    minWidth: 900,
+    minHeight: 600,
+    title: 'Budget App',
+    icon: path.join(__dirname, 'icons', 'icon.png'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    backgroundColor: '#0f1117',
+    show: false,
+  })
+
+  mainWindow.once('ready-to-show', () =&gt; mainWindow.show())
+
+  if (isDev) {
+    mainWindow.loadURL('http://localhost:5173')
+  } else {
+    mainWindow.loadFile(path.join(__dirname, '..', 'frontend', 'dist', 'index.html'))
+  }
+
+  // Open external links in the default browser
+  mainWindow.webContents.setWindowOpenHandler(({ url }) =&gt; {
+    shell.openExternal(url)
+    return { action: 'deny' }
+  })
+}
+</code></pre>
+<p>Key design decisions:</p>
+<ul>
+<li><strong><code>show: false</code> + <code>ready-to-show</code></strong>: Prevents the white flash while the app loads</li>
+<li><strong><code>backgroundColor: '#0f1117'</code></strong>: Matches the dark theme so the window background blends seamlessly</li>
+<li><strong><code>titleBarStyle: 'hiddenInset'</code></strong>: Uses macOS's native title bar with the traffic lights inset (cleaner look)</li>
+<li><strong><code>contextIsolation: true</code></strong>: Security best practice — prevents the renderer from accessing Node.js APIs directly</li>
+<li><strong>External links</strong>: Opens any <code>&lt;a target="_blank"&gt;</code> links in the system browser instead of a new Electron window</li>
+</ul>
+<h3 id="startup-sequence">Startup Sequence</h3>
+<pre><code class="language-javascript">async function startup() {
+  if (isDev) {
+    // Dev mode: backend already running via start.sh
+    // Just wait for it to respond
+    let retries = 0
+    while (retries &lt; 60) {
+      if (await isBackendReady()) break
+      await new Promise(r =&gt; setTimeout(r, 500))
+      retries++
+    }
+  } else {
+    // Production: start the bundled backend
+    startBackend()
+    let retries = 0
+    while (retries &lt; 60) {
+      if (await isBackendReady()) break
+      await new Promise(r =&gt; setTimeout(r, 500))
+      retries++
+    }
+  }
+  createWindow()
+}
+
+app.whenReady().then(startup)
+</code></pre>
+<p>The startup polls the <code>/health</code> endpoint every 500ms for up to 30 seconds. In development, <code>start.sh</code> has already started the backend. In production, the backend-manager starts the PyInstaller binary.</p>
+<h3 id="shutdown">Shutdown</h3>
+<pre><code class="language-javascript">app.on('window-all-closed', () =&gt; {
+  if (!isDev) stopBackend()
+  if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('before-quit', () =&gt; {
+  if (!isDev) stopBackend()
+})
+</code></pre>
+<p>In development, the backend is managed by <code>start.sh</code>, so Electron doesn't touch it. In production, Electron stops the backend process on quit.</p>
+<hr>
+<h2 id="73-backend-manager-electronbackend-managerjs">7.3 Backend Manager (<code>electron/backend-manager.js</code>)</h2>
+<p>Manages the Python backend process lifecycle:</p>
+<pre><code class="language-javascript">const { spawn } = require('child_process')
+const path = require('path')
+const http = require('http')
+
+let backendProcess = null
+const BACKEND_PORT = 8000
+
+function getBackendPath() {
+  // Production: PyInstaller bundle inside app resources
+  const ext = process.platform === 'win32' ? '.exe' : ''
+  return path.join(
+    process.resourcesPath,
+    'backend',
+    `budget-app-backend${ext}`
+  )
+}
+
+function startBackend() {
+  if (backendProcess) return
+
+  const backendPath = getBackendPath()
+  backendProcess = spawn(backendPath, [], {
+    env: {
+      ...process.env,
+      BUDGET_APP_PORT: String(BACKEND_PORT),
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+
+  backendProcess.stdout.on('data', (data) =&gt;
+    console.log(`[backend] ${data.toString().trim()}`)
+  )
+  backendProcess.stderr.on('data', (data) =&gt;
+    console.error(`[backend] ${data.toString().trim()}`)
+  )
+  backendProcess.on('close', (code) =&gt; {
+    console.log(`Backend exited with code ${code}`)
+    backendProcess = null
+  })
+}
+
+function stopBackend() {
+  if (!backendProcess) return
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/pid', backendProcess.pid, '/f', '/t'])
+  } else {
+    backendProcess.kill('SIGTERM')
+  }
+  backendProcess = null
+}
+
+function isBackendReady() {
+  return new Promise((resolve) =&gt; {
+    const req = http.get(`http://localhost:${BACKEND_PORT}/health`, (res) =&gt;
+      resolve(res.statusCode === 200)
+    )
+    req.on('error', () =&gt; resolve(false))
+    req.setTimeout(2000, () =&gt; { req.destroy(); resolve(false) })
+  })
+}
+</code></pre>
+<hr>
+<h2 id="74-preload-script-electronpreloadjs">7.4 Preload Script (<code>electron/preload.js</code>)</h2>
+<p>The preload script bridges the secure renderer and Node.js:</p>
+<pre><code class="language-javascript">const { contextBridge, ipcRenderer } = require('electron')
+
+contextBridge.exposeInMainWorld('electronAPI', {
+  getVersion: () =&gt; process.env.npm_package_version || '0.1.0',
+  getPlatform: () =&gt; process.platform,
+})
+</code></pre>
+<p>This exposes a minimal API to the renderer. The app currently uses it lightly, but it's the correct pattern for any future Electron ↔ renderer communication (e.g., native file dialogs, system notifications).</p>
+<hr>
+<h2 id="75-building-the-python-backend">7.5 Building the Python Backend</h2>
+<p>PyInstaller bundles the Python backend into a standalone binary that doesn't require Python to be installed:</p>
+<pre><code class="language-bash"># Install PyInstaller (in the build optional dependencies)
+uv pip install pyinstaller
+
+# Build the backend binary
+pyinstaller \
+  --name budget-app-backend \
+  --onefile \
+  --hidden-import uvicorn.logging \
+  --hidden-import uvicorn.protocols.http \
+  --hidden-import uvicorn.protocols.http.auto \
+  --hidden-import uvicorn.lifespan.on \
+  --add-data &quot;backend:backend&quot; \
+  --add-data &quot;.env:.env&quot; \
+  backend_entry.py
+</code></pre>
+<p>The entry point (<code>backend_entry.py</code>) starts uvicorn programmatically:</p>
+<pre><code class="language-python">#!/usr/bin/env python3
+&quot;&quot;&quot;Entry point for PyInstaller-bundled backend.&quot;&quot;&quot;
+import uvicorn
+import os
+
+if __name__ == &quot;__main__&quot;:
+    port = int(os.environ.get(&quot;BUDGET_APP_PORT&quot;, 8000))
+    uvicorn.run(&quot;backend.main:app&quot;, host=&quot;127.0.0.1&quot;, port=port)
+</code></pre>
+<p>The <code>--hidden-import</code> flags are necessary because PyInstaller's dependency analysis misses some uvicorn internals that are loaded dynamically.</p>
+<hr>
+<h2 id="76-building-the-electron-app">7.6 Building the Electron App</h2>
+<h3 id="frontend-build">Frontend Build</h3>
+<p>First, build the React frontend for production:</p>
+<pre><code class="language-bash">cd frontend
+npm run build
+# Output: frontend/dist/
+</code></pre>
+<p>The production build generates static files that Electron loads directly via <code>loadFile()</code> (no dev server needed).</p>
+<h3 id="electron-packaging">Electron Packaging</h3>
+<p>The <code>package.json</code> at the project root configures electron-builder:</p>
+<pre><code class="language-json">{
+  &quot;name&quot;: &quot;budget-app&quot;,
+  &quot;version&quot;: &quot;0.1.0&quot;,
+  &quot;main&quot;: &quot;electron/main.js&quot;,
+  &quot;build&quot;: {
+    &quot;appId&quot;: &quot;com.seanlewis.budgetapp&quot;,
+    &quot;productName&quot;: &quot;Budget App&quot;,
+    &quot;directories&quot;: {
+      &quot;output&quot;: &quot;release&quot;
+    },
+    &quot;files&quot;: [
+      &quot;electron/**/*&quot;,
+      &quot;frontend/dist/**/*&quot;,
+      &quot;package.json&quot;
+    ],
+    &quot;extraResources&quot;: [
+      {
+        &quot;from&quot;: &quot;dist/budget-app-backend&quot;,
+        &quot;to&quot;: &quot;backend/budget-app-backend&quot;
+      }
+    ],
+    &quot;mac&quot;: {
+      &quot;target&quot;: &quot;dmg&quot;,
+      &quot;category&quot;: &quot;public.app-category.finance&quot;,
+      &quot;icon&quot;: &quot;electron/icons/icon.icns&quot;
+    },
+    &quot;win&quot;: {
+      &quot;target&quot;: &quot;nsis&quot;,
+      &quot;icon&quot;: &quot;electron/icons/icon.ico&quot;
+    }
+  }
+}
+</code></pre>
+<p>Build the distributable:</p>
+<pre><code class="language-bash"># After building both the Python backend and React frontend
+npx electron-builder --mac    # DMG for macOS
+npx electron-builder --win    # NSIS installer for Windows
+</code></pre>
+<p>The output goes to the <code>release/</code> directory.</p>
+<h3 id="build-pipeline-summary">Build Pipeline Summary</h3>
+<pre><code>1. uv sync                           # Install Python deps
+2. cd frontend &amp;&amp; npm install         # Install Node deps
+3. cd frontend &amp;&amp; npm run build       # Build React → frontend/dist/
+4. pyinstaller ... backend_entry.py   # Bundle Python → dist/budget-app-backend
+5. npx electron-builder --mac         # Package everything → release/Budget App.dmg
+</code></pre>
+<hr>
+<h2 id="77-production-vs-development">7.7 Production vs. Development</h2>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>Development</th>
+<th>Production</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Backend</td>
+<td><code>uv run uvicorn ... --reload</code></td>
+<td>PyInstaller binary</td>
+</tr>
+<tr>
+<td>Frontend</td>
+<td>Vite dev server (HMR)</td>
+<td>Static files from <code>frontend/dist/</code></td>
+</tr>
+<tr>
+<td>API proxy</td>
+<td>Vite proxy (<code>/api</code> → <code>:8000</code>)</td>
+<td>Direct localhost:8000</td>
+</tr>
+<tr>
+<td>Electron</td>
+<td><code>npx electron .</code></td>
+<td>Packaged <code>.app</code> / <code>.exe</code></td>
+</tr>
+<tr>
+<td>Window URL</td>
+<td><code>http://localhost:5173</code></td>
+<td><code>file:///frontend/dist/index.html</code></td>
+</tr>
+<tr>
+<td>Backend lifecycle</td>
+<td>Managed by <code>start.sh</code></td>
+<td>Managed by <code>backend-manager.js</code></td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="78-project-summary">7.8 Project Summary</h2>
+<p>When fully assembled, the Budget App has:</p>
+<ul>
+<li><strong>4 bank accounts</strong> connected via Plaid (Discover, SoFi Checking, SoFi Savings, Wells Fargo)</li>
+<li><strong>3-tier categorization</strong> with 18 parent categories, 80+ subcategories, and 50+ merchant mappings</li>
+<li><strong>13+ frontend pages</strong>: Review Queue, Spending, Cash Flow, Recurring, Budget, Accounts, Investments, Insights, Data, Categories, Settings, Deleted Transactions, Sync History</li>
+<li><strong>AI-powered features</strong>: Transaction categorization (Claude Haiku), financial insights (Claude Sonnet + Haiku chat)</li>
+<li><strong>Investment tracking</strong>: Plaid + yfinance for portfolio analysis with daily snapshots</li>
+<li><strong>Background sync</strong>: APScheduler (in-app) + LaunchAgent daemon (background) + Git backup</li>
+<li><strong>Audit trail</strong>: SyncLog, DeletedTransactions, and detailed logging throughout</li>
+</ul>
+<p>The data lives entirely on the user's machine in <code>~/BudgetApp/</code> — no cloud services required beyond the Plaid and Anthropic APIs.</p>
+<hr>
+<h2 id="quick-reference-all-api-endpoints">Quick Reference: All API Endpoints</h2>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/health</code></td>
+<td>Backend health check</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/stats</code></td>
+<td>Dashboard statistics</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/transactions</code></td>
+<td>List transactions (with filters)</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/transactions/pending</code></td>
+<td>Pending review queue</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/transactions/{id}/review</code></td>
+<td>Confirm category</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/transactions/commit</code></td>
+<td>Commit staged transactions</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td><code>/api/transactions/{id}</code></td>
+<td>Soft-delete transaction</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/transactions/bulk-delete</code></td>
+<td>Bulk soft-delete</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/transactions/bulk-categorize</code></td>
+<td>Bulk categorize</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/transactions/spending-by-category</code></td>
+<td>Monthly spending breakdown</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/transactions/monthly-trend</code></td>
+<td>Monthly trend data</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/transactions/cash-flow</code></td>
+<td>Cash flow analysis</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/transactions/recurring-monitor</code></td>
+<td>Recurring charges grid</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/transactions/years</code></td>
+<td>Available years</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/transactions/deleted</code></td>
+<td>Deleted transactions log</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/transactions/deleted/{id}/restore</code></td>
+<td>Restore deleted</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td><code>/api/transactions/deleted/{id}</code></td>
+<td>Purge from log</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td><code>/api/transactions/deleted</code></td>
+<td>Purge all from log</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/categories</code></td>
+<td>List categories</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/categories/tree</code></td>
+<td>Category hierarchy</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/categories</code></td>
+<td>Create category</td>
+</tr>
+<tr>
+<td>PUT</td>
+<td><code>/api/categories/{id}</code></td>
+<td>Update category</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/categories/{id}/merge</code></td>
+<td>Merge categories</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td><code>/api/categories/{id}</code></td>
+<td>Delete category</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/budgets</code></td>
+<td>List budgets for month</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/budgets</code></td>
+<td>Create/update budget</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/accounts</code></td>
+<td>List accounts</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/accounts/sync-history</code></td>
+<td>Sync audit log</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/accounts/link/create</code></td>
+<td>Plaid link token</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/accounts/link/exchange</code></td>
+<td>Exchange public token</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/accounts/{id}/sync</code></td>
+<td>Sync single account</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/accounts/sync-all</code></td>
+<td>Sync all accounts</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/accounts/{id}/disconnect</code></td>
+<td>Disconnect account</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/import</code></td>
+<td>CSV import</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/import/auto-detect</code></td>
+<td>Detect bank format</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/archive/scan</code></td>
+<td>Scan for archives</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/archive/import</code></td>
+<td>Import archive</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/archive/coverage</code></td>
+<td>Data coverage</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/investments/summary</code></td>
+<td>Portfolio summary</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/investments/holdings</code></td>
+<td>All holdings</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/investments/performance</code></td>
+<td>Performance chart data</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/investments/allocation</code></td>
+<td>Asset allocation</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/investments/transactions</code></td>
+<td>Investment transactions</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/investments/link-token</code></td>
+<td>Investment link token</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/investments/link/exchange</code></td>
+<td>Exchange investment token</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/investments/refresh-prices</code></td>
+<td>Refresh stock prices</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/insights/snapshot</code></td>
+<td>Financial snapshot</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/insights/analyze</code></td>
+<td>AI analysis (SSE stream)</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/insights/chat</code></td>
+<td>Follow-up chat (SSE stream)</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<p>← <a href="README.md">Back to Index</a></p>
+      </div>
+      <div class="docs-nav-footer">
+        <a href="06-advanced-features.html" class="docs-nav-link prev">
+  <span class="label">&larr; Previous</span>
+  <span class="title">Advanced Features</span>
+</a>
+        
+      </div>
+    </main>
+  </div>
+</body>
+</html>

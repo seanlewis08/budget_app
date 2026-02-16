@@ -100,6 +100,41 @@ def list_accounts(db: Session = Depends(get_db)):
     return results
 
 
+# NOTE: Literal paths (/sync-history) MUST be defined before
+#       parameterised paths (/{account_id}) so FastAPI matches them first.
+
+@router.get("/sync-history")
+def get_sync_history(
+    account_id: int = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    """Return recent sync log entries for all or a specific account."""
+    from ..models import SyncLog
+
+    query = db.query(SyncLog).order_by(SyncLog.started_at.desc())
+    if account_id:
+        query = query.filter(SyncLog.account_id == account_id)
+    logs = query.limit(limit).all()
+
+    return [
+        {
+            "id": log.id,
+            "account_id": log.account_id,
+            "account_name": log.account.name if log.account else "Unknown",
+            "trigger": log.trigger,
+            "status": log.status,
+            "added": log.added,
+            "modified": log.modified,
+            "removed": log.removed,
+            "error_message": log.error_message,
+            "duration_seconds": log.duration_seconds,
+            "started_at": log.started_at.isoformat() if log.started_at else None,
+        }
+        for log in logs
+    ]
+
+
 @router.get("/{account_id}", response_model=AccountOut)
 def get_account(account_id: int, db: Session = Depends(get_db)):
     """Get a single account by ID."""
@@ -147,7 +182,7 @@ def exchange_public_token(req: LinkExchangeRequest, db: Session = Depends(get_db
 
         # Trigger first sync for the primary account
         try:
-            sync_result = plaid_service.sync_transactions(account, db)
+            sync_result = plaid_service.sync_transactions(account, db, trigger="initial")
             result["sync"] = sync_result
         except Exception as sync_err:
             result["sync_error"] = str(sync_err)
@@ -161,7 +196,7 @@ def exchange_public_token(req: LinkExchangeRequest, db: Session = Depends(get_db
             ).all()
             for sibling in siblings:
                 try:
-                    plaid_service.sync_transactions(sibling, db)
+                    plaid_service.sync_transactions(sibling, db, trigger="initial")
                 except Exception as sib_err:
                     logger.warning(f"Sibling sync failed for {sibling.name}: {sib_err}")
 
@@ -186,7 +221,7 @@ def sync_account(account_id: int, db: Session = Depends(get_db)):
         )
 
     try:
-        result = plaid_service.sync_transactions(account, db)
+        result = plaid_service.sync_transactions(account, db, trigger="manual")
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
@@ -262,7 +297,7 @@ def reset_cursor(account_id: int, db: Session = Depends(get_db)):
 
     # Immediately re-sync with fresh cursor
     try:
-        result = plaid_service.sync_transactions(account, db)
+        result = plaid_service.sync_transactions(account, db, trigger="manual")
         return {"status": "ok", "cursor_reset": True, **result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Sync failed after reset: {str(e)}")
@@ -280,7 +315,7 @@ def sync_all_accounts(db: Session = Depends(get_db)):
     results = {}
     for account in accounts:
         try:
-            result = plaid_service.sync_transactions(account, db)
+            result = plaid_service.sync_transactions(account, db, trigger="manual")
             results[account.name] = {"status": "ok", **result}
         except Exception as e:
             results[account.name] = {"status": "error", "error": str(e)}

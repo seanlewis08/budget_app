@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Calendar, ChevronLeft, ChevronRight, ChevronDown, Search, ArrowUpDown, Plus, X, Filter, CheckSquare, Square, MinusSquare } from 'lucide-react'
+import { Calendar, ChevronLeft, ChevronRight, ChevronDown, Search, ArrowUpDown, Plus, X, Filter, CheckSquare, Square, MinusSquare, Trash2 } from 'lucide-react'
 import CategoryPicker from '../components/CategoryPicker'
 
 const PAGE_SIZES = [50, 100, 'All']
@@ -422,6 +422,41 @@ export default function Data() {
     }
   }
 
+  const handleDeleteTransaction = async (txnId) => {
+    if (!confirm('Delete this transaction? This cannot be undone.')) return
+    try {
+      const res = await fetch(`/api/transactions/${txnId}`, { method: 'DELETE' })
+      if (res.ok) {
+        setTransactions(prev => prev.filter(t => t.id !== txnId))
+        setSelectedIds(prev => { const next = new Set(prev); next.delete(txnId); return next })
+      } else {
+        const err = await res.json()
+        console.error('Delete failed:', err.detail)
+      }
+    } catch (err) { console.error('Delete failed:', err) }
+  }
+
+  const handleBulkDelete = async () => {
+    const count = selectedIds.size
+    if (!confirm(`Delete ${count} transaction${count > 1 ? 's' : ''}? This cannot be undone.`)) return
+    try {
+      const res = await fetch('/api/transactions/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transaction_ids: [...selectedIds] }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        const deletedSet = new Set(data.transaction_ids)
+        setTransactions(prev => prev.filter(t => !deletedSet.has(t.id)))
+        setSelectedIds(new Set())
+      } else {
+        const err = await res.json()
+        console.error('Bulk delete failed:', err.detail)
+      }
+    } catch (err) { console.error('Bulk delete failed:', err) }
+  }
+
   const handlePageSizeChange = (size) => {
     setPageSize(size)
     setOffset(0)
@@ -608,6 +643,12 @@ export default function Data() {
                 Categorize ({selectedIds.size})
               </button>
               <button
+                className="btn btn-danger btn-sm"
+                onClick={handleBulkDelete}
+              >
+                <Trash2 size={12} /> Delete ({selectedIds.size})
+              </button>
+              <button
                 className="btn btn-secondary btn-sm"
                 onClick={() => setSelectedIds(new Set())}
               >
@@ -649,18 +690,19 @@ export default function Data() {
                 <th className="data-th-category">Category</th>
                 <th className="data-th-status">Status</th>
                 <th className="data-th-source">Source</th>
+                <th className="data-th-actions" style={{ width: 36 }}></th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
+                  <td colSpan={9} style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
                     Loading...
                   </td>
                 </tr>
               ) : sortedTransactions.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
+                  <td colSpan={9} style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
                     {search ? `No transactions matching "${search}"` : 'No transactions found'}
                   </td>
                 </tr>
@@ -682,8 +724,8 @@ export default function Data() {
                       </span>
                     </td>
                     <td className="data-cell-date">{formatDate(txn.date)}</td>
-                    <td className="data-cell-desc" title={txn.description}>
-                      {txn.merchant_name || txn.description}
+                    <td className="data-cell-desc" title={txn.merchant_name && txn.merchant_name !== txn.description ? `${txn.merchant_name}` : ''}>
+                      {txn.description}
                     </td>
                     <td className="data-cell-account">{bankName(txn.account_name)}</td>
                     <td className={`data-cell-amount ${txn.amount > 0 ? 'expense' : 'income'}`}>
@@ -716,6 +758,15 @@ export default function Data() {
                     </td>
                     <td className="data-cell-source">
                       {txn.source === 'plaid_sync' ? 'Plaid' : txn.source === 'archive_import' ? 'Archive' : 'CSV'}
+                    </td>
+                    <td className="data-cell-actions" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        className="btn-icon danger"
+                        title="Delete transaction"
+                        onClick={() => handleDeleteTransaction(txn.id)}
+                      >
+                        <Trash2 size={13} />
+                      </button>
                     </td>
                   </tr>
                 ))

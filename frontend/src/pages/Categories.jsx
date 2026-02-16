@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { Plus, ChevronDown, ChevronRight, Pencil, Trash2, X, Check, FolderTree, ChevronsDownUp, ChevronsUpDown } from 'lucide-react'
+import { Plus, ChevronDown, ChevronRight, Pencil, Trash2, X, Check, FolderTree, ChevronsDownUp, ChevronsUpDown, GitMerge } from 'lucide-react'
 
 /* ─── Inline Edit / Create Form ─── */
 function CategoryForm({ initial, isSubcategory, onSave, onCancel }) {
@@ -157,16 +157,172 @@ function MoveParentPicker({ categoryTree, currentParentId, onSelect, onCancel, a
   return createPortal(pickerContent, document.body)
 }
 
+/* ─── Merge Target Picker (portal-based, shows all subcategories grouped by parent) ─── */
+function MergeTargetPicker({ categoryTree, sourceId, onSelect, onCancel, anchorRef }) {
+  const dropdownRef = useRef(null)
+  const [pos, setPos] = useState(null)
+  const [search, setSearch] = useState('')
+  const searchRef = useRef(null)
+
+  useEffect(() => {
+    const updatePos = () => {
+      if (!anchorRef?.current) return
+      const rect = anchorRef.current.getBoundingClientRect()
+      const dropdownWidth = 260
+      const dropdownMaxHeight = 360
+
+      let left = rect.left
+      let top = rect.bottom + 4
+
+      if (left + dropdownWidth > window.innerWidth - 16) {
+        left = window.innerWidth - dropdownWidth - 16
+      }
+      if (left < 16) left = 16
+
+      if (top + dropdownMaxHeight > window.innerHeight - 16) {
+        top = rect.top - dropdownMaxHeight - 4
+        if (top < 16) top = 16
+      }
+
+      setPos({ top, left })
+    }
+
+    updatePos()
+    window.addEventListener('scroll', updatePos, true)
+    window.addEventListener('resize', updatePos)
+    return () => {
+      window.removeEventListener('scroll', updatePos, true)
+      window.removeEventListener('resize', updatePos)
+    }
+  }, [anchorRef])
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (
+        dropdownRef.current && !dropdownRef.current.contains(e.target) &&
+        anchorRef?.current && !anchorRef.current.contains(e.target)
+      ) onCancel()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onCancel, anchorRef])
+
+  useEffect(() => {
+    setTimeout(() => searchRef.current?.focus(), 0)
+  }, [])
+
+  const q = search.toLowerCase()
+
+  if (!pos) return null
+
+  const pickerContent = (
+    <div className="merge-picker" ref={dropdownRef} style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 9999 }}>
+      <div className="merge-picker-header">Merge into...</div>
+      <input
+        ref={searchRef}
+        type="text"
+        className="merge-picker-search"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search subcategories..."
+      />
+      <div className="merge-picker-list">
+        {categoryTree.map(parent => {
+          const children = (parent.children || []).filter(
+            c => c.id !== sourceId && (!q || c.display_name.toLowerCase().includes(q))
+          )
+          if (children.length === 0) return null
+          return (
+            <React.Fragment key={parent.id}>
+              <div className="merge-picker-parent">
+                <span className="cat-dot" style={{ background: parent.color || 'var(--accent)' }} />
+                {parent.display_name}
+              </div>
+              {children.map(c => (
+                <div
+                  key={c.id}
+                  className="merge-picker-item"
+                  onClick={() => onSelect(c.short_desc, c.display_name)}
+                >
+                  {c.display_name}
+                </div>
+              ))}
+            </React.Fragment>
+          )
+        })}
+      </div>
+    </div>
+  )
+
+  return createPortal(pickerContent, document.body)
+}
+
 /* ─── Child Row (needs ref for move-picker anchor) ─── */
-function ChildRow({ child, parent, categoryTree, movingId, setMovingId, moveCategory, deleteCategory }) {
+function ChildRow({ child, parent, categoryTree, movingId, setMovingId, moveCategory, mergingId, setMergingId, mergeCategory, deleteCategory, updateCategory }) {
   const moveBtnRef = useRef(null)
+  const mergeBtnRef = useRef(null)
+  const [renaming, setRenaming] = useState(false)
+  const [renameVal, setRenameVal] = useState(child.display_name)
+
+  const submitRename = () => {
+    const trimmed = renameVal.trim()
+    if (!trimmed || trimmed === child.display_name) { setRenaming(false); return }
+    updateCategory(child.short_desc, { display_name: trimmed })
+    setRenaming(false)
+  }
+
+  const toggleRecurring = () => {
+    updateCategory(child.short_desc, { is_recurring: !child.is_recurring })
+  }
 
   return (
     <div className="cat-tree-child-row">
       <span className="cat-tree-indent" />
-      <span className="cat-tree-name">{child.display_name}</span>
-      <span className="cat-tree-key">{child.short_desc}</span>
-      {child.is_recurring && <span className="cat-recurring-badge">recurring</span>}
+      {renaming ? (
+        <form
+          className="cat-rename-form"
+          onSubmit={(e) => { e.preventDefault(); submitRename() }}
+          style={{ flex: 1 }}
+        >
+          <input
+            type="text"
+            className="cat-rename-input"
+            value={renameVal}
+            onChange={(e) => setRenameVal(e.target.value)}
+            autoFocus
+            onKeyDown={(e) => { if (e.key === 'Escape') setRenaming(false) }}
+          />
+          <button type="submit" className="btn-icon" title="Save" disabled={!renameVal.trim()}>
+            <Check size={14} />
+          </button>
+          <button type="button" className="btn-icon" title="Cancel" onClick={() => setRenaming(false)}>
+            <X size={14} />
+          </button>
+        </form>
+      ) : (
+        <>
+          <span className="cat-tree-name">{child.display_name}</span>
+          <span className="cat-tree-key">{child.short_desc}</span>
+        </>
+      )}
+      <label className="cat-recurring-toggle" title={child.is_recurring ? 'Recurring (click to unset)' : 'Not recurring (click to set)'}>
+        <input
+          type="checkbox"
+          checked={child.is_recurring}
+          onChange={toggleRecurring}
+          style={{ accentColor: 'var(--accent)' }}
+        />
+        <span className={`cat-recurring-label ${child.is_recurring ? 'active' : ''}`}>recurring</span>
+      </label>
+      {!renaming && (
+        <button
+          className="btn-icon"
+          title="Rename subcategory"
+          onClick={() => { setRenaming(true); setRenameVal(child.display_name) }}
+        >
+          <Pencil size={14} />
+        </button>
+      )}
       <button
         ref={moveBtnRef}
         className="btn-icon"
@@ -174,6 +330,14 @@ function ChildRow({ child, parent, categoryTree, movingId, setMovingId, moveCate
         onClick={() => setMovingId(movingId === child.id ? null : child.id)}
       >
         <FolderTree size={14} />
+      </button>
+      <button
+        ref={mergeBtnRef}
+        className="btn-icon"
+        title="Merge into another subcategory"
+        onClick={() => setMergingId(mergingId === child.id ? null : child.id)}
+      >
+        <GitMerge size={14} />
       </button>
       <button
         className="btn-icon danger"
@@ -189,6 +353,15 @@ function ChildRow({ child, parent, categoryTree, movingId, setMovingId, moveCate
           anchorRef={moveBtnRef}
           onSelect={(newParentShortDesc) => moveCategory(child.short_desc, newParentShortDesc)}
           onCancel={() => setMovingId(null)}
+        />
+      )}
+      {mergingId === child.id && (
+        <MergeTargetPicker
+          categoryTree={categoryTree}
+          sourceId={child.id}
+          anchorRef={mergeBtnRef}
+          onSelect={(targetShortDesc, targetDisplayName) => mergeCategory(child.short_desc, child.display_name, targetShortDesc, targetDisplayName)}
+          onCancel={() => setMergingId(null)}
         />
       )}
     </div>
@@ -209,6 +382,7 @@ export default function Categories() {
   const [renamingId, setRenamingId] = useState(null) // parent id being renamed
   const [renameValue, setRenameValue] = useState('')
   const [movingId, setMovingId] = useState(null) // child id currently showing move picker
+  const [mergingId, setMergingId] = useState(null) // child id currently showing merge picker
   const [error, setError] = useState(null)
 
   useEffect(() => { fetchTree() }, [])
@@ -339,6 +513,27 @@ export default function Categories() {
       }
     } catch (err) {
       setError('Network error moving category')
+    }
+  }
+
+  const mergeCategory = async (sourceShortDesc, sourceDisplayName, targetShortDesc, targetDisplayName) => {
+    setMergingId(null)
+    if (!confirm(`Merge "${sourceDisplayName}" into "${targetDisplayName}"?\n\nAll transactions, merchant mappings, and budgets will be reassigned. The "${sourceDisplayName}" subcategory will be deleted.\n\nThis cannot be undone.`)) return
+    setError(null)
+    try {
+      const res = await fetch(`/api/categories/${sourceShortDesc}/merge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_short_desc: targetShortDesc }),
+      })
+      if (res.ok) {
+        await fetchTree()
+      } else {
+        const err = await res.json()
+        setError(err.detail || 'Failed to merge category')
+      }
+    } catch (err) {
+      setError('Network error merging category')
     }
   }
 
@@ -480,7 +675,11 @@ export default function Categories() {
                       movingId={movingId}
                       setMovingId={setMovingId}
                       moveCategory={moveCategory}
+                      mergingId={mergingId}
+                      setMergingId={setMergingId}
+                      mergeCategory={mergeCategory}
                       deleteCategory={deleteCategory}
+                      updateCategory={updateCategory}
                     />
                   ))}
 

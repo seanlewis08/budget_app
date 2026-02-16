@@ -1,7 +1,9 @@
-import React, { useState } from 'react'
-import { Save, Mail, Key, Database } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { Save, Mail, Key, Database, Trash2, ChevronRight } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 
 export default function SettingsPage() {
+  const navigate = useNavigate()
   const [settings, setSettings] = useState({
     email_enabled: false,
     email_address: '',
@@ -11,6 +13,15 @@ export default function SettingsPage() {
     auto_confirm_threshold: 3,
   })
   const [saved, setSaved] = useState(false)
+  const [deletedCount, setDeletedCount] = useState(0)
+
+  useEffect(() => {
+    // Fetch count of deleted transactions for the badge
+    fetch('/api/transactions/deleted')
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setDeletedCount(data.length))
+      .catch(() => {})
+  }, [])
 
   const handleSave = async () => {
     // TODO: Save to backend settings endpoint
@@ -139,6 +150,27 @@ export default function SettingsPage() {
           <Save size={14} style={{ marginRight: 6 }} />
           {saved ? 'Saved!' : 'Save Settings'}
         </button>
+      </div>
+
+      {/* Deleted Transactions Link */}
+      <div
+        className="card settings-link-card"
+        style={{ marginTop: 24, cursor: 'pointer' }}
+        onClick={() => navigate('/deleted-transactions')}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Trash2 size={16} />
+            <span style={{ fontWeight: 500 }}>Deleted Transactions</span>
+            {deletedCount > 0 && (
+              <span className="deleted-count-badge">{deletedCount}</span>
+            )}
+          </div>
+          <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />
+        </div>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 0 26px' }}>
+          View, restore, or permanently clear deleted transactions
+        </p>
       </div>
     </div>
   )

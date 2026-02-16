@@ -855,8 +855,8 @@ export default function ReviewQueue({ stats, onUpdate }) {
                   </span>
                 )}
                 <span className="date">{formatDate(txn.date)}</span>
-                <span className="description" title={txn.description}>
-                  {txn.merchant_name || txn.description}
+                <span className="description" title={txn.merchant_name && txn.merchant_name !== txn.description ? txn.merchant_name : ''}>
+                  {txn.description}
                 </span>
                 <span className="account-tag" title={txn.account_name}>{txn.account_name}</span>
                 <span className={`amount ${txn.amount > 0 ? 'expense' : 'income'}`}>

@@ -25,6 +25,8 @@ from plaid.model.accounts_balance_get_request import AccountsBalanceGetRequest
 from plaid.model.country_code import CountryCode
 from plaid.model.products import Products
 from plaid.model.link_token_transactions import LinkTokenTransactions
+from plaid.model.investments_holdings_get_request import InvestmentsHoldingsGetRequest
+from plaid.model.investments_transactions_get_request import InvestmentsTransactionsGetRequest
 
 from cryptography.fernet import Fernet
 from sqlalchemy.orm import Session
@@ -279,15 +281,22 @@ class PlaidService:
 
     # ── Transaction Sync ──
 
-    def sync_transactions(self, account, db: Session) -> dict:
+    def sync_transactions(self, account, db: Session, _retry_count: int = 0, trigger: str = "manual") -> dict:
         """
         Cursor-based transaction sync for one account.
         Deduplicates by plaid_transaction_id, runs categorization on new ones.
 
+        Handles TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION by resetting the
+        cursor and retrying (up to 3 times).
+
         Returns: {"added": int, "modified": int, "removed": int}
         """
-        from ..models import Transaction
+        import time as _time
+        from ..models import Transaction, SyncLog
         from .categorize import categorize_transaction
+
+        MAX_MUTATION_RETRIES = 3
+        sync_start = _time.time()
 
         if not account.plaid_access_token:
             raise ValueError(f"Account {account.name} has no Plaid access token")
@@ -329,9 +338,42 @@ class PlaidService:
                 response = self.client.transactions_sync(request)
             except plaid.ApiException as e:
                 error_body = e.body if hasattr(e, "body") else str(e)
-                account.last_sync_error = str(error_body)[:500]
-                if "ITEM_LOGIN_REQUIRED" in str(error_body):
+                error_str = str(error_body)
+
+                # Handle mutation-during-pagination: reset cursor and retry
+                if "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION" in error_str:
+                    if _retry_count < MAX_MUTATION_RETRIES:
+                        logger.warning(
+                            f"Mutation during pagination for {account.name} "
+                            f"(attempt {_retry_count + 1}/{MAX_MUTATION_RETRIES}). "
+                            f"Resetting cursor and retrying..."
+                        )
+                        # Reset cursor to empty to restart from scratch
+                        account.plaid_cursor = ""
+                        db.commit()
+                        return self.sync_transactions(account, db, _retry_count=_retry_count + 1, trigger="retry")
+                    else:
+                        logger.error(
+                            f"Mutation during pagination for {account.name} — "
+                            f"exhausted {MAX_MUTATION_RETRIES} retries"
+                        )
+
+                account.last_sync_error = error_str[:500]
+                if "ITEM_LOGIN_REQUIRED" in error_str:
                     account.plaid_connection_status = "item_login_required"
+
+                # Log the failed sync
+                sync_log = SyncLog(
+                    account_id=account.id,
+                    trigger=trigger if _retry_count == 0 else "retry",
+                    status="error",
+                    added=added_count,
+                    modified=modified_count,
+                    removed=removed_count,
+                    error_message=error_str[:500],
+                    duration_seconds=round(_time.time() - sync_start, 2),
+                )
+                db.add(sync_log)
                 db.commit()
                 logger.error(f"Plaid sync error for {account.name}: {error_body}")
                 raise
@@ -388,6 +430,18 @@ class PlaidService:
         # Update account state
         account.last_synced_at = datetime.utcnow()
         account.last_sync_error = None
+
+        # Log the successful sync
+        sync_log = SyncLog(
+            account_id=account.id,
+            trigger=trigger if _retry_count == 0 else "retry",
+            status="success",
+            added=added_count,
+            modified=modified_count,
+            removed=removed_count,
+            duration_seconds=round(_time.time() - sync_start, 2),
+        )
+        db.add(sync_log)
         db.commit()
 
         logger.info(
@@ -449,11 +503,15 @@ class PlaidService:
 
         if existing:
             # Update existing transaction (e.g. amount/date changed)
+            # but NEVER overwrite user-confirmed categories
             existing.date = txn_date
-            existing.description = description
-            existing.merchant_name = merchant_name
             existing.amount = amount
             existing.is_pending = is_pending
+            # Only update description/merchant if user hasn't confirmed
+            # (preserves any manual edits on confirmed transactions)
+            if existing.status not in ("confirmed", "pending_save"):
+                existing.description = description
+                existing.merchant_name = merchant_name
             db.flush()
             return 1
 
@@ -467,12 +525,14 @@ class PlaidService:
             ).first()
             if pending_match:
                 # Upgrade the pending record to posted
+                # Preserve user-confirmed category
                 pending_match.plaid_transaction_id = plaid_txn_id
                 pending_match.date = txn_date
-                pending_match.description = description
-                pending_match.merchant_name = merchant_name
                 pending_match.amount = amount
                 pending_match.is_pending = False
+                if pending_match.status not in ("confirmed", "pending_save"):
+                    pending_match.description = description
+                    pending_match.merchant_name = merchant_name
                 db.flush()
                 return 1
 
@@ -495,11 +555,16 @@ class PlaidService:
             # Merge: link archive record to Plaid, update fields
             archive_match.plaid_transaction_id = plaid_txn_id
             archive_match.date = txn_date
-            archive_match.merchant_name = merchant_name
             archive_match.is_pending = is_pending
-            # Keep the archive description if original_description isn't available
-            if original_desc:
-                archive_match.description = description
+            # Preserve category and description on confirmed transactions
+            if archive_match.status not in ("confirmed", "pending_save"):
+                archive_match.merchant_name = merchant_name
+                if original_desc:
+                    archive_match.description = description
+            else:
+                # Still update merchant_name if not set
+                if not archive_match.merchant_name:
+                    archive_match.merchant_name = merchant_name
             # Keep existing category assignment from archive
             logger.info(
                 f"  Merged Plaid txn with archive: {description[:50]} "
@@ -508,7 +573,34 @@ class PlaidService:
             db.flush()
             return 1
 
-        # ── 4. Brand new transaction — run categorization engine ──
+        # ── 4. Dedup check: same account + date + amount already exists? ──
+        # After a cursor reset, Plaid may re-send transactions we already have
+        # under a different transaction_id. Don't create duplicates.
+        dupe_match = (
+            db.query(Transaction)
+            .filter(
+                Transaction.account_id == account.id,
+                Transaction.date == txn_date,
+                Transaction.amount == amount,
+                Transaction.plaid_transaction_id.isnot(None),
+            )
+            .first()
+        )
+        if dupe_match:
+            # Link the new Plaid ID but preserve everything else
+            logger.info(
+                f"  Dedup: linking new plaid_txn_id to existing txn "
+                f"({dupe_match.plaid_transaction_id} → {plaid_txn_id}): "
+                f"{description[:50]} ${amount} on {txn_date}"
+            )
+            dupe_match.plaid_transaction_id = plaid_txn_id
+            if dupe_match.status not in ("confirmed", "pending_save"):
+                dupe_match.description = description
+                dupe_match.merchant_name = merchant_name
+            db.flush()
+            return 1
+
+        # ── 5. Brand new transaction — run categorization engine ──
         cat_result = categorize_transaction(description, amount, db, use_ai=True)
 
         txn = Transaction(
@@ -580,6 +672,276 @@ class PlaidService:
             }
 
         raise ValueError("Could not match Plaid account to local account")
+
+    # ── Investment Link Token ──
+
+    def create_link_token_investments(
+        self, user_id: int, redirect_uri: Optional[str] = None
+    ) -> str:
+        """Create a link_token that requests the investments product."""
+        kwargs = dict(
+            products=[Products("investments")],
+            client_name="Budget App",
+            country_codes=[CountryCode("US")],
+            language="en",
+            user=LinkTokenCreateRequestUser(
+                client_user_id=str(user_id),
+            ),
+        )
+        if redirect_uri:
+            kwargs["redirect_uri"] = redirect_uri
+
+        request = LinkTokenCreateRequest(**kwargs)
+        response = self.client.link_token_create(request)
+        return response["link_token"]
+
+    # ── Investment Holdings Sync ──
+
+    def sync_investment_holdings(self, access_token_encrypted: str, inv_account, inv_db) -> dict:
+        """
+        Fetch holdings + securities from Plaid and upsert into the investments DB.
+        Creates a daily snapshot of each holding.
+        Returns: {"securities_upserted": int, "holdings_upserted": int}
+        """
+        from ..models_investments import Security, Holding
+        from datetime import date as date_type
+
+        access_token = self.decrypt_token(access_token_encrypted)
+
+        request = InvestmentsHoldingsGetRequest(access_token=access_token)
+        response = self.client.investments_holdings_get(request)
+
+        plaid_securities = response.get("securities", [])
+        plaid_holdings = response.get("holdings", [])
+        plaid_accounts = response.get("accounts", [])
+
+        today = date_type.today()
+
+        # 1. Upsert securities
+        security_map = {}  # plaid_security_id -> Security record
+        for ps in plaid_securities:
+            plaid_sec_id = ps.get("security_id")
+            if not plaid_sec_id:
+                continue
+
+            existing = inv_db.query(Security).filter(
+                Security.plaid_security_id == plaid_sec_id
+            ).first()
+
+            ticker = ps.get("ticker_symbol")
+            name = ps.get("name") or ticker or "Unknown"
+            sec_type = str(ps.get("type", "")).lower().replace(" ", "_") or "stock"
+            close_price = ps.get("close_price")
+            close_price_date = ps.get("close_price_as_of")
+
+            if existing:
+                existing.name = name
+                if ticker:
+                    existing.ticker = ticker
+                existing.security_type = sec_type
+                if close_price is not None:
+                    existing.close_price = float(close_price)
+                    existing.close_price_as_of = datetime.utcnow()
+                    existing.price_source = "plaid"
+                if ps.get("iso_currency_code"):
+                    pass  # All USD for now
+                security_map[plaid_sec_id] = existing
+            else:
+                sec = Security(
+                    plaid_security_id=plaid_sec_id,
+                    ticker=ticker,
+                    name=name,
+                    security_type=sec_type,
+                    close_price=float(close_price) if close_price else None,
+                    close_price_as_of=datetime.utcnow() if close_price else None,
+                    price_source="plaid" if close_price else None,
+                )
+                inv_db.add(sec)
+                inv_db.flush()
+                security_map[plaid_sec_id] = sec
+
+        # 2. Upsert holdings (daily snapshot)
+        holdings_upserted = 0
+        for ph in plaid_holdings:
+            plaid_sec_id = ph.get("security_id")
+            plaid_acct_id = ph.get("account_id")
+
+            # Filter to this account
+            if inv_account.plaid_account_id and plaid_acct_id != inv_account.plaid_account_id:
+                continue
+
+            security = security_map.get(plaid_sec_id)
+            if not security:
+                continue
+
+            quantity = float(ph.get("quantity", 0))
+            cost_basis = ph.get("cost_basis")
+            cost_basis = float(cost_basis) if cost_basis is not None else None
+            institution_value = ph.get("institution_value")
+            current_value = float(institution_value) if institution_value is not None else None
+
+            cost_per_unit = None
+            if cost_basis and quantity > 0:
+                cost_per_unit = cost_basis / quantity
+
+            # Upsert for today's snapshot
+            existing_holding = inv_db.query(Holding).filter(
+                Holding.investment_account_id == inv_account.id,
+                Holding.security_id == security.id,
+                Holding.as_of_date == today,
+            ).first()
+
+            if existing_holding:
+                existing_holding.quantity = quantity
+                existing_holding.cost_basis = cost_basis
+                existing_holding.cost_basis_per_unit = cost_per_unit
+                existing_holding.current_value = current_value
+            else:
+                holding = Holding(
+                    investment_account_id=inv_account.id,
+                    security_id=security.id,
+                    quantity=quantity,
+                    cost_basis=cost_basis,
+                    cost_basis_per_unit=cost_per_unit,
+                    current_value=current_value,
+                    as_of_date=today,
+                )
+                inv_db.add(holding)
+            holdings_upserted += 1
+
+        inv_account.last_synced_at = datetime.utcnow()
+        inv_account.last_sync_error = None
+        inv_db.commit()
+
+        logger.info(
+            f"Investment holdings sync: {len(security_map)} securities, "
+            f"{holdings_upserted} holdings for {inv_account.account_name}"
+        )
+        return {
+            "securities_upserted": len(security_map),
+            "holdings_upserted": holdings_upserted,
+        }
+
+    # ── Investment Transactions Sync ──
+
+    def sync_investment_transactions(
+        self, access_token_encrypted: str, inv_account, inv_db,
+        start_date=None, end_date=None
+    ) -> dict:
+        """
+        Fetch investment transactions (buys, sells, dividends, etc.) from Plaid.
+        Deduplicates by plaid_investment_transaction_id.
+        Returns: {"added": int, "skipped": int}
+        """
+        from ..models_investments import Security, InvestmentTransaction
+        from datetime import timedelta
+        from datetime import date as date_type
+
+        access_token = self.decrypt_token(access_token_encrypted)
+
+        if not start_date:
+            start_date = date_type.today() - timedelta(days=730)
+        if not end_date:
+            end_date = date_type.today()
+
+        # Build security lookup
+        all_securities = {s.plaid_security_id: s for s in inv_db.query(Security).all()}
+
+        added = 0
+        skipped = 0
+        offset = 0
+        total_count = None
+
+        while True:
+            request = InvestmentsTransactionsGetRequest(
+                access_token=access_token,
+                start_date=start_date,
+                end_date=end_date,
+                options={"offset": offset, "count": 100},
+            )
+
+            try:
+                response = self.client.investments_transactions_get(request)
+            except plaid.ApiException as e:
+                error_body = e.body if hasattr(e, "body") else str(e)
+                inv_account.last_sync_error = str(error_body)[:500]
+                inv_db.commit()
+                logger.error(f"Plaid investment txn error: {error_body}")
+                raise
+
+            inv_txns = response.get("investment_transactions", [])
+            if total_count is None:
+                total_count = response.get("total_investment_transactions", 0)
+
+            for txn_data in inv_txns:
+                plaid_inv_txn_id = txn_data.get("investment_transaction_id")
+                if not plaid_inv_txn_id:
+                    continue
+
+                # Skip if already exists
+                existing = inv_db.query(InvestmentTransaction).filter(
+                    InvestmentTransaction.plaid_investment_transaction_id == plaid_inv_txn_id
+                ).first()
+                if existing:
+                    skipped += 1
+                    continue
+
+                # Filter to this account
+                plaid_acct_id = txn_data.get("account_id")
+                if inv_account.plaid_account_id and plaid_acct_id != inv_account.plaid_account_id:
+                    continue
+
+                # Resolve security
+                plaid_sec_id = txn_data.get("security_id")
+                security = all_securities.get(plaid_sec_id) if plaid_sec_id else None
+
+                txn_date = txn_data.get("date")
+                if isinstance(txn_date, str):
+                    txn_date = date_type.fromisoformat(txn_date)
+
+                txn_type = str(txn_data.get("type", "")).lower() or "cash"
+                subtype = str(txn_data.get("subtype", "")).lower()
+                # Map Plaid subtypes to simpler types
+                if subtype in ("dividend", "qualified dividend", "non-qualified dividend"):
+                    txn_type = "dividend"
+                elif subtype == "dividend reinvestment":
+                    txn_type = "dividend_reinvestment"
+                elif subtype in ("buy", "buy to cover"):
+                    txn_type = "buy"
+                elif subtype in ("sell", "sell short"):
+                    txn_type = "sell"
+                elif subtype in ("long-term capital gain", "short-term capital gain"):
+                    txn_type = "capital_gain"
+                elif subtype in ("contribution", "deposit"):
+                    txn_type = "transfer"
+                elif subtype == "fee":
+                    txn_type = "fee"
+
+                inv_txn = InvestmentTransaction(
+                    investment_account_id=inv_account.id,
+                    security_id=security.id if security else None,
+                    plaid_investment_transaction_id=plaid_inv_txn_id,
+                    date=txn_date,
+                    type=txn_type,
+                    quantity=float(txn_data.get("quantity", 0)) if txn_data.get("quantity") else None,
+                    price=float(txn_data.get("price", 0)) if txn_data.get("price") else None,
+                    amount=float(txn_data.get("amount", 0)),
+                    fees=float(txn_data.get("fees") or 0),
+                    notes=txn_data.get("name"),
+                )
+                inv_db.add(inv_txn)
+                added += 1
+
+            offset += len(inv_txns)
+            if offset >= total_count or len(inv_txns) == 0:
+                break
+
+        inv_db.commit()
+        logger.info(
+            f"Investment transactions sync: +{added} skipped={skipped} "
+            f"for {inv_account.account_name}"
+        )
+        return {"added": added, "skipped": skipped}
 
 
 # Module-level singleton

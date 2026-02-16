@@ -14,7 +14,7 @@ from sqlalchemy import func, extract
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
-from ..models import Transaction, Category, MerchantMapping, Account
+from ..models import Transaction, Category, MerchantMapping, Account, DeletedTransaction
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ def _query_transactions(
         query = _exclude_transfers(query, db)
 
     transactions = (
-        query.order_by(Transaction.date.desc())
+        query.order_by(Transaction.date.desc(), Transaction.description.asc())
         .offset(offset)
         .limit(limit)
         .all()
@@ -237,6 +237,223 @@ def review_transaction(
 
     db.commit()
     return {"status": "confirmed", "transaction_id": txn.id, "category": action.category_short_desc}
+
+
+# NOTE: Literal DELETE paths (/deleted, /deleted/{id}) MUST be defined before
+#       parameterised paths (/{transaction_id}) so FastAPI matches them first.
+
+@router.delete("/deleted/{deleted_id}")
+def purge_deleted_transaction(deleted_id: int, db: Session = Depends(get_db)):
+    """Permanently remove a single deleted transaction from the audit log."""
+    entry = db.query(DeletedTransaction).get(deleted_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Deleted transaction not found")
+
+    db.delete(entry)
+    db.commit()
+    logger.info(f"Purged deleted transaction {deleted_id}")
+    return {"status": "purged", "id": deleted_id}
+
+
+@router.delete("/deleted")
+def purge_all_deleted(db: Session = Depends(get_db)):
+    """Permanently remove ALL deleted transactions from the audit log."""
+    count = db.query(DeletedTransaction).count()
+    db.query(DeletedTransaction).delete()
+    db.commit()
+    logger.info(f"Purged all {count} deleted transactions")
+    return {"status": "purged", "count": count}
+
+
+@router.delete("/{transaction_id}")
+def delete_transaction(
+    transaction_id: int,
+    db: Session = Depends(get_db),
+):
+    """Delete a transaction and log it to the deleted_transactions audit table."""
+    txn = db.query(Transaction).get(transaction_id)
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    # Resolve names for the audit log
+    account_name = None
+    if txn.account_id:
+        acct = db.query(Account).get(txn.account_id)
+        if acct:
+            account_name = acct.name
+
+    category_name = None
+    if txn.category_id:
+        cat = db.query(Category).get(txn.category_id)
+        if cat:
+            category_name = cat.display_name
+
+    # Write audit log
+    log_entry = DeletedTransaction(
+        original_id=txn.id,
+        account_id=txn.account_id,
+        account_name=account_name,
+        date=txn.date,
+        description=txn.description,
+        merchant_name=txn.merchant_name,
+        amount=txn.amount,
+        category_name=category_name,
+        status=txn.status,
+        source=txn.source,
+    )
+    db.add(log_entry)
+    db.delete(txn)
+    db.commit()
+
+    logger.info(f"Deleted transaction {transaction_id}: {txn.date} {txn.description} ${txn.amount}")
+    return {"status": "deleted", "transaction_id": transaction_id}
+
+
+class BulkDeleteAction(BaseModel):
+    transaction_ids: list[int]
+
+
+@router.post("/bulk-delete")
+def bulk_delete(
+    action: BulkDeleteAction,
+    db: Session = Depends(get_db),
+):
+    """Delete multiple transactions, logging each to the audit table."""
+    deleted = []
+    for tid in action.transaction_ids:
+        txn = db.query(Transaction).get(tid)
+        if not txn:
+            continue
+
+        account_name = None
+        if txn.account_id:
+            acct = db.query(Account).get(txn.account_id)
+            if acct:
+                account_name = acct.name
+
+        category_name = None
+        if txn.category_id:
+            cat = db.query(Category).get(txn.category_id)
+            if cat:
+                category_name = cat.display_name
+
+        log_entry = DeletedTransaction(
+            original_id=txn.id,
+            account_id=txn.account_id,
+            account_name=account_name,
+            date=txn.date,
+            description=txn.description,
+            merchant_name=txn.merchant_name,
+            amount=txn.amount,
+            category_name=category_name,
+            status=txn.status,
+            source=txn.source,
+        )
+        db.add(log_entry)
+        db.delete(txn)
+        deleted.append(tid)
+
+    db.commit()
+    logger.info(f"Bulk deleted {len(deleted)} transactions: {deleted}")
+    return {"status": "deleted", "count": len(deleted), "transaction_ids": deleted}
+
+
+@router.get("/deleted")
+def list_deleted_transactions(db: Session = Depends(get_db)):
+    """List all deleted transactions from the audit log, most recent first."""
+    rows = (
+        db.query(DeletedTransaction)
+        .order_by(DeletedTransaction.deleted_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "original_id": r.original_id,
+            "account_id": r.account_id,
+            "account_name": r.account_name,
+            "date": str(r.date),
+            "description": r.description,
+            "merchant_name": r.merchant_name,
+            "amount": r.amount,
+            "category_name": r.category_name,
+            "status": r.status,
+            "source": r.source,
+            "deleted_at": r.deleted_at.isoformat() if r.deleted_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/restore/{deleted_id}")
+def restore_transaction(deleted_id: int, db: Session = Depends(get_db)):
+    """Restore a deleted transaction back into the transactions table."""
+    entry = db.query(DeletedTransaction).get(deleted_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Deleted transaction not found")
+
+    # Resolve category_id from stored category_name (best-effort)
+    category_id = None
+    if entry.category_name:
+        cat = db.query(Category).filter(Category.display_name == entry.category_name).first()
+        if cat:
+            category_id = cat.id
+
+    txn = Transaction(
+        account_id=entry.account_id,
+        date=entry.date,
+        description=entry.description,
+        merchant_name=entry.merchant_name,
+        amount=entry.amount,
+        category_id=category_id,
+        status="confirmed",
+        source=entry.source,
+    )
+    db.add(txn)
+    db.delete(entry)
+    db.commit()
+    db.refresh(txn)
+
+    logger.info(f"Restored transaction (was id={entry.original_id}): {txn.date} {txn.description}")
+    return {"status": "restored", "transaction_id": txn.id}
+
+
+class BulkRestoreAction(BaseModel):
+    deleted_ids: list[int]
+
+
+@router.post("/bulk-restore")
+def bulk_restore(action: BulkRestoreAction, db: Session = Depends(get_db)):
+    """Restore multiple deleted transactions."""
+    restored = []
+    for did in action.deleted_ids:
+        entry = db.query(DeletedTransaction).get(did)
+        if not entry:
+            continue
+
+        category_id = None
+        if entry.category_name:
+            cat = db.query(Category).filter(Category.display_name == entry.category_name).first()
+            if cat:
+                category_id = cat.id
+
+        txn = Transaction(
+            account_id=entry.account_id,
+            date=entry.date,
+            description=entry.description,
+            merchant_name=entry.merchant_name,
+            amount=entry.amount,
+            category_id=category_id,
+            status="confirmed",
+            source=entry.source,
+        )
+        db.add(txn)
+        db.delete(entry)
+        restored.append(did)
+
+    db.commit()
+    logger.info(f"Bulk restored {len(restored)} transactions: {restored}")
+    return {"status": "restored", "count": len(restored), "deleted_ids": restored}
 
 
 @router.post("/bulk-review")
@@ -433,6 +650,96 @@ def get_available_years(db: Session = Depends(get_db)):
         }
         for r in results
     ]
+
+
+# ── Recurring Monitor ──
+
+
+@router.get("/recurring-monitor")
+def recurring_monitor(
+    year: int = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """
+    Monthly grid of recurring transactions for the given year.
+    Returns one row per recurring subcategory with 12-element monthly array.
+    """
+    from sqlalchemy.orm import aliased
+
+    if year is None:
+        year = datetime.utcnow().year
+
+    ParentCat = aliased(Category)
+
+    # 1. Determine which months have ANY confirmed transaction data this year
+    active_month_rows = (
+        db.query(func.distinct(extract("month", Transaction.date).label("m")))
+        .filter(Transaction.status.in_(["confirmed", "auto_confirmed"]))
+        .filter(extract("year", Transaction.date) == year)
+        .all()
+    )
+    active_months = sorted(int(r[0]) for r in active_month_rows)
+
+    # 2. Query recurring subcategories grouped by month
+    query = (
+        db.query(
+            Category.id,
+            Category.short_desc,
+            Category.display_name,
+            Category.parent_id,
+            ParentCat.display_name.label("parent_name"),
+            ParentCat.color.label("parent_color"),
+            ParentCat.short_desc.label("parent_short_desc"),
+            extract("month", Transaction.date).label("month"),
+            func.sum(Transaction.amount).label("total"),
+            func.count(Transaction.id).label("count"),
+        )
+        .join(Transaction, Transaction.category_id == Category.id)
+        .outerjoin(ParentCat, Category.parent_id == ParentCat.id)
+        .filter(Category.is_recurring == True)
+        .filter(Category.parent_id.isnot(None))
+        .filter(Transaction.status.in_(["confirmed", "auto_confirmed"]))
+        .filter(extract("year", Transaction.date) == year)
+    )
+
+    query = _exclude_transfers(query, db)
+
+    results = query.group_by(Category.id, extract("month", Transaction.date)).all()
+
+    # 3. Build per-category monthly arrays
+    cat_map = {}  # category_id -> row dict
+    for r in results:
+        cid = r.id
+        if cid not in cat_map:
+            cat_map[cid] = {
+                "category_id": cid,
+                "short_desc": r.short_desc,
+                "display_name": r.display_name,
+                "parent_id": r.parent_id,
+                "parent_name": r.parent_name or "Other",
+                "parent_color": r.parent_color,
+                "parent_short_desc": r.parent_short_desc or "other",
+                "monthly": [None] * 12,
+            }
+        month_idx = int(r.month) - 1  # 0-indexed
+        cat_map[cid]["monthly"][month_idx] = round(r.total, 2)
+
+    rows = sorted(cat_map.values(), key=lambda r: (r["parent_name"], r["display_name"]))
+
+    # 4. Compute totals per month across all rows
+    totals = [0.0] * 12
+    for row in rows:
+        for i in range(12):
+            if row["monthly"][i] is not None:
+                totals[i] += row["monthly"][i]
+    totals = [round(t, 2) for t in totals]
+
+    return {
+        "year": year,
+        "active_months": active_months,
+        "rows": rows,
+        "totals": totals,
+    }
 
 
 # ── Cash Flow Analysis ──
@@ -1020,6 +1327,113 @@ def fix_archive_signs(
         "message": (
             f"Would flip {flipped} transactions" if dry_run
             else f"Flipped {flipped} transactions successfully"
+        ),
+    }
+
+
+@router.post("/deduplicate")
+def deduplicate_transactions(
+    dry_run: bool = Query(default=True, description="Preview changes without applying"),
+    db: Session = Depends(get_db),
+):
+    """
+    Find and remove duplicate transactions caused by cursor resets.
+
+    Duplicates are identified by matching account_id + date + amount + description.
+    When duplicates exist, keeps the one with the best status (confirmed > pending_save
+    > auto_confirmed > pending_review) and deletes the rest.
+    """
+    from sqlalchemy import func as sqlfunc
+
+    # Find groups with duplicates: same account, date, amount, description
+    dupes = (
+        db.query(
+            Transaction.account_id,
+            Transaction.date,
+            Transaction.amount,
+            Transaction.description,
+            sqlfunc.count(Transaction.id).label("cnt"),
+        )
+        .group_by(
+            Transaction.account_id,
+            Transaction.date,
+            Transaction.amount,
+            Transaction.description,
+        )
+        .having(sqlfunc.count(Transaction.id) > 1)
+        .all()
+    )
+
+    # Status priority: higher = keep
+    status_priority = {
+        "confirmed": 4,
+        "pending_save": 3,
+        "auto_confirmed": 2,
+        "pending_review": 1,
+    }
+
+    total_removed = 0
+    sample = []
+
+    for group in dupes:
+        acct_id, txn_date, amount, description = group[0], group[1], group[2], group[3]
+
+        # Fetch all transactions in this group
+        matches = (
+            db.query(Transaction)
+            .filter(
+                Transaction.account_id == acct_id,
+                Transaction.date == txn_date,
+                Transaction.amount == amount,
+                Transaction.description == description,
+            )
+            .all()
+        )
+
+        if len(matches) <= 1:
+            continue
+
+        # Sort: best status first, then prefer ones with category_id, then lowest id (oldest)
+        matches.sort(
+            key=lambda t: (
+                -status_priority.get(t.status, 0),
+                -(1 if t.category_id else 0),
+                t.id,
+            )
+        )
+
+        # Keep the first, remove the rest
+        keep = matches[0]
+        to_remove = matches[1:]
+
+        for dup in to_remove:
+            if len(sample) < 20:
+                sample.append({
+                    "kept_id": keep.id,
+                    "removed_id": dup.id,
+                    "date": str(txn_date),
+                    "description": description[:60],
+                    "amount": amount,
+                    "kept_status": keep.status,
+                    "removed_status": dup.status,
+                })
+            if not dry_run:
+                db.delete(dup)
+            total_removed += 1
+
+    if not dry_run:
+        db.commit()
+        logger.info(f"Dedup complete: removed {total_removed} duplicate transactions")
+
+    return {
+        "dry_run": dry_run,
+        "duplicate_groups": len(dupes),
+        "transactions_removed": total_removed,
+        "sample": sample,
+        "message": (
+            f"Found {total_removed} duplicates across {len(dupes)} groups"
+            if dry_run
+            else f"Removed {total_removed} duplicate transactions"
         ),
     }
 

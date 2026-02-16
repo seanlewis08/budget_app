@@ -34,6 +34,8 @@ def seed_categories_and_accounts():
             "Savings": {"color": "#87CEEB", "is_income": False},
             "Personal_Spending": {"color": "#F7DC6F", "is_income": False},
             "Recreation_Entertainment": {"color": "#BB8FCE", "is_income": False},
+            "Streaming_Services": {"color": "#E74C3C", "is_income": False},
+            "Education": {"color": "#5DADE2", "is_income": False},
             "Travel": {"color": "#F1948A", "is_income": False},
             "Misc": {"color": "#AEB6BF", "is_income": False},
             "People": {"color": "#73C6B6", "is_income": False},
@@ -74,7 +76,6 @@ def seed_categories_and_accounts():
             ],
             "Transportation": [
                 ("gas_station", "Gas Station", False),
-                ("car_insurance", "Car Insurance", True),
                 ("car_maintenance", "Car Maintenance", False),
                 ("parking", "Parking", False),
                 ("toll", "Toll", False),
@@ -84,8 +85,7 @@ def seed_categories_and_accounts():
             "Insurance": [
                 ("health_insurance", "Health Insurance", True),
                 ("renters_insurance", "Renters Insurance", True),
-                ("state_farm", "State Farm", True),
-                ("progressive", "Progressive", True),
+                ("car_insurance", "Car Insurance", True),
             ],
             "Utilities": [
                 ("cell_phone", "Cell Phone", True),
@@ -119,6 +119,13 @@ def seed_categories_and_accounts():
                 ("gym", "Gym", True),
             ],
             "Recreation_Entertainment": [
+                ("concerts", "Concerts", False),
+                ("live_nba", "Live NBA", False),
+                ("movies", "Movies", False),
+                ("tennis", "Tennis", False),
+                ("gaming", "Gaming", False),
+            ],
+            "Streaming_Services": [
                 ("spotify", "Spotify", True),
                 ("netflix", "Netflix", True),
                 ("hulu", "Hulu", True),
@@ -126,11 +133,11 @@ def seed_categories_and_accounts():
                 ("apple_tv", "Apple TV", True),
                 ("youtube_premium", "YouTube Premium", True),
                 ("disney_plus", "Disney+", True),
-                ("concerts", "Concerts", False),
-                ("live_nba", "Live NBA", False),
-                ("movies", "Movies", False),
-                ("tennis", "Tennis", False),
-                ("gaming", "Gaming", False),
+            ],
+            "Education": [
+                ("books", "Books", False),
+                ("courses", "Courses", False),
+                ("tuition", "Tuition", False),
             ],
             "Travel": [
                 ("air_travel", "Air Travel", False),
@@ -274,7 +281,7 @@ def seed_categories_and_accounts():
             # Payments
             ("DISCOVER", "credit_card_payment"), ("INTEREST CHARGE", "interest_charge"),
             # Insurance
-            ("STATE FARM", "state_farm"), ("PROGRESSIVE", "progressive"),
+            ("STATE FARM", "car_insurance"), ("PROGRESSIVE", "car_insurance"),
             # Savings
             ("STUDENT LOAN", "student_loan"), ("NAVIENT", "student_loan"),
             ("SOFI INVEST", "investment"),

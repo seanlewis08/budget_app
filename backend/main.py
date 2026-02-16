@@ -12,8 +12,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from .database import init_db
+from .investments_database import init_investments_db
 from .migrations import run_migrations
-from .routers import transactions, categories, budgets, import_csv, notifications, accounts, archive
+from .routers import transactions, categories, budgets, import_csv, notifications, accounts, archive, investments, insights
 from .services.seed_data import seed_categories_and_accounts
 from .services.sync_scheduler import start_scheduler, stop_scheduler
 
@@ -22,6 +23,7 @@ from .services.sync_scheduler import start_scheduler, stop_scheduler
 async def lifespan(app: FastAPI):
     """Run on startup: create tables, migrate, seed data, start sync scheduler."""
     init_db()
+    init_investments_db()
     run_migrations()
     seed_categories_and_accounts()
     start_scheduler()
@@ -53,6 +55,8 @@ app.include_router(import_csv.router, prefix="/api/import", tags=["CSV Import"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 app.include_router(accounts.router, prefix="/api/accounts", tags=["Accounts"])
 app.include_router(archive.router, prefix="/api/archive", tags=["Archive Import"])
+app.include_router(investments.router, prefix="/api/investments", tags=["Investments"])
+app.include_router(insights.router, prefix="/api/insights", tags=["Financial Insights"])
 
 
 @app.get("/health")

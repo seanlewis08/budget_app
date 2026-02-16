@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { BrowserRouter, Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { usePlaidLink } from 'react-plaid-link'
-import { LayoutDashboard, CheckSquare, TrendingUp, Wallet, Upload, Settings, FolderTree, Database, BarChart3 } from 'lucide-react'
+import { LayoutDashboard, CheckSquare, TrendingUp, Wallet, Upload, Settings, FolderTree, Database, BarChart3, Repeat, LineChart, Sparkles } from 'lucide-react'
 import ReviewQueue from './pages/ReviewQueue'
 import Spending from './pages/Spending'
 import Budget from './pages/Budget'
@@ -9,7 +9,12 @@ import Accounts from './pages/Accounts'
 import Categories from './pages/Categories'
 import Data from './pages/Data'
 import CashFlow from './pages/CashFlow'
+import RecurringMonitor from './pages/RecurringMonitor'
+import Investments from './pages/Investments'
+import Insights from './pages/Insights'
 import SettingsPage from './pages/Settings'
+import DeletedTransactions from './pages/DeletedTransactions'
+import SyncHistory from './pages/SyncHistory'
 
 function Sidebar({ pendingCount }) {
   return (
@@ -39,6 +44,12 @@ function Sidebar({ pendingCount }) {
           </NavLink>
         </li>
         <li>
+          <NavLink to="/recurring">
+            <Repeat size={18} />
+            Recurring
+          </NavLink>
+        </li>
+        <li>
           <NavLink to="/budget">
             <Wallet size={18} />
             Budget
@@ -48,6 +59,18 @@ function Sidebar({ pendingCount }) {
           <NavLink to="/accounts">
             <LayoutDashboard size={18} />
             Accounts
+          </NavLink>
+        </li>
+        <li>
+          <NavLink to="/investments">
+            <LineChart size={18} />
+            Investments
+          </NavLink>
+        </li>
+        <li>
+          <NavLink to="/insights">
+            <Sparkles size={18} />
+            Insights
           </NavLink>
         </li>
         <li>
@@ -150,12 +173,17 @@ function AppContent() {
           <Route path="/" element={<ReviewQueue stats={stats} onUpdate={fetchStats} />} />
           <Route path="/spending" element={<Spending />} />
           <Route path="/cash-flow" element={<CashFlow />} />
+          <Route path="/recurring" element={<RecurringMonitor />} />
           <Route path="/budget" element={<Budget />} />
           <Route path="/accounts" element={<Accounts onUpdate={fetchStats} />} />
+          <Route path="/investments" element={<Investments />} />
+          <Route path="/insights" element={<Insights />} />
           <Route path="/data" element={<Data />} />
           <Route path="/categories" element={<Categories />} />
           <Route path="/oauth-callback" element={<OAuthCallback />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/deleted-transactions" element={<DeletedTransactions />} />
+          <Route path="/sync-history" element={<SyncHistory />} />
         </Routes>
       </main>
     </div>

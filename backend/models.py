@@ -105,6 +105,24 @@ class Transaction(Base):
         return f"<Transaction {self.date} {self.description[:30]} ${self.amount}>"
 
 
+class DeletedTransaction(Base):
+    """Audit log of deleted transactions."""
+    __tablename__ = "deleted_transactions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    original_id = Column(Integer, nullable=False)
+    account_id = Column(Integer, nullable=True)
+    account_name = Column(String(200), nullable=True)
+    date = Column(Date, nullable=False)
+    description = Column(Text, nullable=False)
+    merchant_name = Column(String(200), nullable=True)
+    amount = Column(Float, nullable=False)
+    category_name = Column(String(100), nullable=True)
+    status = Column(String(20), nullable=True)
+    source = Column(String(20), nullable=True)
+    deleted_at = Column(DateTime, default=datetime.utcnow)
+
+
 class MerchantMapping(Base):
     __tablename__ = "merchant_mappings"
 
@@ -183,3 +201,28 @@ class NotificationLog(Base):
 
     def __repr__(self):
         return f"<NotificationLog txn={self.transaction_id} sent={self.sent_at}>"
+
+
+class SyncLog(Base):
+    """Log of every sync attempt — success or failure — for audit trail."""
+    __tablename__ = "sync_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    trigger = Column(String(20), nullable=False)  # "scheduled", "manual", "retry"
+    status = Column(String(20), nullable=False)  # "success", "error", "partial"
+    added = Column(Integer, default=0)
+    modified = Column(Integer, default=0)
+    removed = Column(Integer, default=0)
+    error_message = Column(Text, nullable=True)
+    duration_seconds = Column(Float, nullable=True)
+    started_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_synclog_account_started", "account_id", "started_at"),
+    )
+
+    account = relationship("Account")
+
+    def __repr__(self):
+        return f"<SyncLog account={self.account_id} {self.status} +{self.added} ~{self.modified} -{self.removed}>"

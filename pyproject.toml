@@ -18,6 +18,7 @@ dependencies = [
     "aiofiles>=24.1.0",
     "cryptography>=44.0.0",
     "apscheduler>=3.10.4",
+    "yfinance>=0.2.36",
 ]
 
 [project.optional-dependencies]
