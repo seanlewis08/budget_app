@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Project Setup & Foundation — Budget App Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../styles.css" />
+  <link rel="stylesheet" href="docs.css" />
+</head>
+<body>
+  <nav class="nav scrolled" id="nav">
+    <div class="nav-inner">
+      <a href="../" class="nav-logo">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#6c5ce7"/><path d="M7 20V8h4.5c2.5 0 4 1.2 4 3.2 0 1.5-.9 2.5-2.2 2.9l2.8 5.9h-2.8l-2.4-5.3H9.4V20H7zm2.4-7.2h2c1.2 0 1.8-.6 1.8-1.5s-.6-1.5-1.8-1.5h-2v3z" fill="white"/><circle cx="20" cy="20" r="4" fill="#a29bfe"/></svg>
+        <span>Budget App</span>
+      </a>
+      <div class="nav-links">
+        <a href="../#features">Features</a>
+        <a href="./">Docs</a>
+        <a href="https://github.com/seanlewis08/budget-app" class="nav-cta" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          GitHub
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="docs-layout">
+    <aside class="docs-sidebar">
+      <h3>Walkthrough</h3>
+      <nav class="docs-nav">
+        <a href="01-project-setup.html" class="active">
+          <span class="docs-nav-num">01</span>
+          Project Setup & Foundation
+        </a>
+        <a href="02-database-and-models.html">
+          <span class="docs-nav-num">02</span>
+          Database Models & Backend Core
+        </a>
+        <a href="03-plaid-integration.html">
+          <span class="docs-nav-num">03</span>
+          Plaid Integration & Accounts
+        </a>
+        <a href="04-categorization-engine.html">
+          <span class="docs-nav-num">04</span>
+          Categorization Engine
+        </a>
+        <a href="05-frontend-react.html">
+          <span class="docs-nav-num">05</span>
+          Frontend & React UI
+        </a>
+        <a href="06-advanced-features.html">
+          <span class="docs-nav-num">06</span>
+          Advanced Features
+        </a>
+        <a href="07-electron-and-deployment.html">
+          <span class="docs-nav-num">07</span>
+          Electron & Deployment
+        </a>
+      </nav>
+    </aside>
+
+    <main class="docs-content">
+      <div class="md-content">
+<h1 id="part-1-project-setup-foundation">Part 1 — Project Setup &amp; Foundation</h1>
+<p>This part covers the repository structure, dependency management, environment configuration, and the development launcher script. By the end, you'll have a runnable skeleton that starts a FastAPI backend, a React frontend, and an Electron window.</p>
+<hr>
+<h2 id="11-repository-structure">1.1 Repository Structure</h2>
+<p>Create the top-level directory layout:</p>
+<pre><code>budget-app/
+  backend/
+    __init__.py
+    routers/
+      __init__.py
+    services/
+      __init__.py
+  electron/
+  frontend/
+  scripts/
+  docs/
+  .env
+  .env.example
+  .gitignore
+  start.sh
+  pyproject.toml
+</code></pre>
+<pre><code class="language-bash">mkdir -p budget-app/{backend/{routers,services},electron,frontend,scripts,docs}
+touch budget-app/backend/__init__.py
+touch budget-app/backend/routers/__init__.py
+touch budget-app/backend/services/__init__.py
+cd budget-app
+git init
+</code></pre>
+<hr>
+<h2 id="12-python-dependencies-pyprojecttoml">1.2 Python Dependencies (<code>pyproject.toml</code>)</h2>
+<p>We use <a href="https://docs.astral.sh/uv/">uv</a> as the Python package manager. Create <code>pyproject.toml</code> at the project root:</p>
+<pre><code class="language-toml">[project]
+name = &quot;budget-app&quot;
+version = &quot;0.1.0&quot;
+description = &quot;Personal finance tracker with AI-powered categorization&quot;
+readme = &quot;README.md&quot;
+requires-python = &quot;&gt;=3.10&quot;
+dependencies = [
+    &quot;fastapi&gt;=0.115.6&quot;,
+    &quot;uvicorn[standard]&gt;=0.34.0&quot;,
+    &quot;sqlalchemy&gt;=2.0.36&quot;,
+    &quot;pydantic&gt;=2.10.4&quot;,
+    &quot;python-dotenv&gt;=1.0.1&quot;,
+    &quot;anthropic&gt;=0.42.0&quot;,
+    &quot;pandas&gt;=2.2.3&quot;,
+    &quot;openpyxl&gt;=3.1.5&quot;,
+    &quot;python-multipart&gt;=0.0.18&quot;,
+    &quot;plaid-python&gt;=27.0.0&quot;,
+    &quot;aiofiles&gt;=24.1.0&quot;,
+    &quot;cryptography&gt;=44.0.0&quot;,
+    &quot;apscheduler&gt;=3.10.4&quot;,
+    &quot;yfinance&gt;=0.2.36&quot;,
+]
+
+[project.optional-dependencies]
+build = [
+    &quot;pyinstaller&gt;=6.11.1&quot;,
+]
+
+[tool.uv]
+dev-dependencies = [
+    &quot;pytest&gt;=8.0.0&quot;,
+    &quot;httpx&gt;=0.27.0&quot;,
+]
+</code></pre>
+<p>Key dependencies and why they're needed:</p>
+<table>
+<thead>
+<tr>
+<th>Package</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fastapi</code> + <code>uvicorn</code></td>
+<td>Web framework and ASGI server</td>
+</tr>
+<tr>
+<td><code>sqlalchemy</code></td>
+<td>ORM for SQLite database</td>
+</tr>
+<tr>
+<td><code>pydantic</code></td>
+<td>Request/response validation</td>
+</tr>
+<tr>
+<td><code>python-dotenv</code></td>
+<td>Load <code>.env</code> files</td>
+</tr>
+<tr>
+<td><code>anthropic</code></td>
+<td>Claude AI SDK for categorization and insights</td>
+</tr>
+<tr>
+<td><code>pandas</code> + <code>openpyxl</code></td>
+<td>CSV/Excel import and data manipulation</td>
+</tr>
+<tr>
+<td><code>python-multipart</code></td>
+<td>File upload support</td>
+</tr>
+<tr>
+<td><code>plaid-python</code></td>
+<td>Plaid API SDK for bank account integration</td>
+</tr>
+<tr>
+<td><code>cryptography</code></td>
+<td>Fernet encryption for Plaid access tokens at rest</td>
+</tr>
+<tr>
+<td><code>apscheduler</code></td>
+<td>Background job scheduling (sync, price fetching)</td>
+</tr>
+<tr>
+<td><code>yfinance</code></td>
+<td>Live stock price data for investment tracking</td>
+</tr>
+</tbody>
+</table>
+<p>Install everything:</p>
+<pre><code class="language-bash">uv sync
+</code></pre>
+<hr>
+<h2 id="13-frontend-dependencies">1.3 Frontend Dependencies</h2>
+<p>Scaffold the React frontend with Vite:</p>
+<pre><code class="language-bash">cd frontend
+npm create vite@latest . -- --template react
+npm install
+</code></pre>
+<p>Install the runtime dependencies:</p>
+<pre><code class="language-bash">npm install react-router-dom recharts lucide-react react-plaid-link
+</code></pre>
+<p>Your <code>frontend/package.json</code> should look like:</p>
+<pre><code class="language-json">{
+  &quot;name&quot;: &quot;budget-app-frontend&quot;,
+  &quot;private&quot;: true,
+  &quot;version&quot;: &quot;0.1.0&quot;,
+  &quot;type&quot;: &quot;module&quot;,
+  &quot;scripts&quot;: {
+    &quot;dev&quot;: &quot;vite&quot;,
+    &quot;build&quot;: &quot;vite build&quot;,
+    &quot;preview&quot;: &quot;vite preview&quot;
+  },
+  &quot;dependencies&quot;: {
+    &quot;react&quot;: &quot;^18.3.1&quot;,
+    &quot;react-dom&quot;: &quot;^18.3.1&quot;,
+    &quot;react-router-dom&quot;: &quot;^6.28.0&quot;,
+    &quot;recharts&quot;: &quot;^2.13.3&quot;,
+    &quot;lucide-react&quot;: &quot;^0.460.0&quot;,
+    &quot;react-plaid-link&quot;: &quot;^3.5.2&quot;
+  },
+  &quot;devDependencies&quot;: {
+    &quot;@types/react&quot;: &quot;^18.3.12&quot;,
+    &quot;@types/react-dom&quot;: &quot;^18.3.1&quot;,
+    &quot;@vitejs/plugin-react&quot;: &quot;^4.3.4&quot;,
+    &quot;vite&quot;: &quot;^6.0.3&quot;
+  }
+}
+</code></pre>
+<hr>
+<h2 id="14-vite-configuration">1.4 Vite Configuration</h2>
+<p>Configure Vite to proxy API calls to the FastAPI backend. Create <code>frontend/vite.config.js</code>:</p>
+<pre><code class="language-js">import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/health': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+    },
+  },
+  build: {
+    outDir: 'dist',
+  },
+})
+</code></pre>
+<p>The proxy configuration is important: during development, the React dev server runs on port 5173 and the FastAPI backend on port 8000. The proxy forwards any request starting with <code>/api</code> or <code>/health</code> to the backend, so the frontend can use relative URLs like <code>fetch('/api/transactions')</code> without hardcoding the backend URL.</p>
+<hr>
+<h2 id="15-environment-variables">1.5 Environment Variables</h2>
+<p>Create <code>.env.example</code> as a template:</p>
+<pre><code class="language-bash"># Budget App Environment Variables
+# Copy this file to .env and fill in your values
+
+# Anthropic API Key (for Claude AI categorization — Tier 3)
+# Get yours at: https://console.anthropic.com
+ANTHROPIC_API_KEY=sk-ant-your-key-here
+
+# Plaid (automated bank syncing)
+# Sign up at: https://dashboard.plaid.com
+PLAID_CLIENT_ID=
+PLAID_SECRET=                  # Sandbox secret (from Plaid dashboard)
+PLAID_PRODUCTION_SECRET=       # Production secret (from Plaid dashboard)
+PLAID_ENV=sandbox              # sandbox, development, or production
+PLAID_TOKEN_ENCRYPTION_KEY=    # Auto-generated on first run if empty
+
+# Email Notifications (Phase 3)
+# Create a Gmail App Password at: Google Account &gt; Security &gt; App Passwords
+EMAIL_ADDRESS=
+EMAIL_APP_PASSWORD=
+EMAIL_RECIPIENT=
+
+# Cloudflare Tunnel (Phase 2 — webhook delivery)
+CLOUDFLARE_TUNNEL_TOKEN=
+</code></pre>
+<p>Copy it to create your actual <code>.env</code>:</p>
+<pre><code class="language-bash">cp .env.example .env
+# Edit .env with your API keys
+</code></pre>
+<p>Add <code>.env</code> to <code>.gitignore</code> so secrets never get committed:</p>
+<pre><code># .gitignore
+.env
+__pycache__/
+*.pyc
+node_modules/
+frontend/dist/
+*.egg-info/
+.venv/
+</code></pre>
+<hr>
+<h2 id="16-development-launcher-startsh">1.6 Development Launcher (<code>start.sh</code>)</h2>
+<p>The <code>start.sh</code> script starts all three services (backend, frontend, Electron) with a single command and tears them all down cleanly on exit:</p>
+<pre><code class="language-bash">#!/bin/bash
+# Budget App — One-click launcher for development
+# Starts backend (FastAPI) + frontend (Vite) + Electron window
+
+cd &quot;$(dirname &quot;$0&quot;)&quot;
+
+cleanup() {
+  echo &quot;Shutting down...&quot;
+  [ -n &quot;$BACKEND_PID&quot; ] &amp;&amp; kill &quot;$BACKEND_PID&quot; 2&gt;/dev/null
+  [ -n &quot;$FRONTEND_PID&quot; ] &amp;&amp; kill &quot;$FRONTEND_PID&quot; 2&gt;/dev/null
+  wait 2&gt;/dev/null
+  echo &quot;Done.&quot;
+  exit 0
+}
+trap cleanup INT TERM EXIT
+
+# Start backend
+echo &quot;Starting backend...&quot;
+uv run uvicorn backend.main:app --port 8000 --reload &amp;
+BACKEND_PID=$!
+
+# Start frontend (run in subshell so cd doesn't affect parent)
+echo &quot;Starting frontend...&quot;
+(cd frontend &amp;&amp; npm run dev) &amp;
+FRONTEND_PID=$!
+
+# Wait for both to be ready
+echo &quot;Waiting for services...&quot;
+for i in $(seq 1 30); do
+  if curl -s http://localhost:8000/health &gt; /dev/null 2&gt;&amp;1; then
+    echo &quot;  Backend ready&quot;
+    break
+  fi
+  sleep 1
+done
+
+for i in $(seq 1 30); do
+  if curl -s http://localhost:5173 &gt; /dev/null 2&gt;&amp;1; then
+    echo &quot;  Frontend ready&quot;
+    break
+  fi
+  sleep 1
+done
+
+# Launch Electron
+echo &quot;Launching app...&quot;
+NODE_ENV=development npx electron .
+
+# Electron closed — cleanup runs via trap
+</code></pre>
+<p>Make it executable:</p>
+<pre><code class="language-bash">chmod +x start.sh
+</code></pre>
+<p>How it works:</p>
+<ol>
+<li>Starts the FastAPI backend with <code>uv run uvicorn</code> (with <code>--reload</code> for auto-restart on file changes)</li>
+<li>Starts the Vite dev server in a subshell</li>
+<li>Polls both services until they respond (up to 30 seconds each)</li>
+<li>Launches Electron in development mode</li>
+<li>When Electron closes (or Ctrl+C), the <code>trap</code> handler kills both background processes</li>
+</ol>
+<hr>
+<h2 id="17-data-directory">1.7 Data Directory</h2>
+<p>The app stores its database outside the project directory so it persists across updates and reinstalls:</p>
+<pre><code>~/BudgetApp/
+  budget.db          # Main transaction database
+  investments.db     # Investment portfolio database
+  logs/
+    sync.log         # Sync daemon output
+  .encryption_key    # Fernet key for Plaid token encryption
+</code></pre>
+<p>This directory is created automatically by the database module (covered in Part 2), but you can create it manually:</p>
+<pre><code class="language-bash">mkdir -p ~/BudgetApp/logs
+</code></pre>
+<hr>
+<h2 id="18-minimal-backend-skeleton">1.8 Minimal Backend Skeleton</h2>
+<p>To verify everything works, create a bare-bones FastAPI app. Create <code>backend/main.py</code>:</p>
+<pre><code class="language-python">&quot;&quot;&quot;Budget App — FastAPI Backend&quot;&quot;&quot;
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(
+    title=&quot;Budget App&quot;,
+    description=&quot;Personal finance tracker with AI-powered categorization&quot;,
+    version=&quot;0.1.0&quot;,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[&quot;http://localhost:3000&quot;, &quot;http://localhost:5173&quot;],
+    allow_credentials=True,
+    allow_methods=[&quot;*&quot;],
+    allow_headers=[&quot;*&quot;],
+)
+
+@app.get(&quot;/health&quot;)
+def health_check():
+    return {&quot;status&quot;: &quot;ok&quot;, &quot;version&quot;: &quot;0.1.0&quot;}
+</code></pre>
+<p>Test it:</p>
+<pre><code class="language-bash">uv run uvicorn backend.main:app --port 8000 --reload
+# In another terminal:
+curl http://localhost:8000/health
+# → {&quot;status&quot;:&quot;ok&quot;,&quot;version&quot;:&quot;0.1.0&quot;}
+</code></pre>
+<hr>
+<h2 id="19-minimal-frontend-skeleton">1.9 Minimal Frontend Skeleton</h2>
+<p>Replace <code>frontend/src/App.jsx</code> with a placeholder:</p>
+<pre><code class="language-jsx">export default function App() {
+  return (
+    &lt;div style={{ padding: 40 }}&gt;
+      &lt;h1&gt;Budget App&lt;/h1&gt;
+      &lt;p&gt;Personal Finance Tracker&lt;/p&gt;
+    &lt;/div&gt;
+  )
+}
+</code></pre>
+<p>And <code>frontend/src/main.jsx</code>:</p>
+<pre><code class="language-jsx">import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App'
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  &lt;React.StrictMode&gt;
+    &lt;App /&gt;
+  &lt;/React.StrictMode&gt;
+)
+</code></pre>
+<p>Test it:</p>
+<pre><code class="language-bash">cd frontend &amp;&amp; npm run dev
+# Open http://localhost:5173 — you should see &quot;Budget App&quot;
+</code></pre>
+<hr>
+<h2 id="whats-next">What's Next</h2>
+<p>With the project scaffolded and all dependencies installed, Part 2 covers the SQLite database setup, SQLAlchemy ORM models, and the full FastAPI application skeleton with lifespan management.</p>
+<p>→ <a href="02-database-and-models.md">Part 2: Database Models &amp; Backend Core</a></p>
+      </div>
+      <div class="docs-nav-footer">
+        
+        <a href="02-database-and-models.html" class="docs-nav-link next">
+  <span class="label">Next &rarr;</span>
+  <span class="title">Database Models & Backend Core</span>
+</a>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

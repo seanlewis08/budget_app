@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Advanced Features — Budget App Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../styles.css" />
+  <link rel="stylesheet" href="docs.css" />
+</head>
+<body>
+  <nav class="nav scrolled" id="nav">
+    <div class="nav-inner">
+      <a href="../" class="nav-logo">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#6c5ce7"/><path d="M7 20V8h4.5c2.5 0 4 1.2 4 3.2 0 1.5-.9 2.5-2.2 2.9l2.8 5.9h-2.8l-2.4-5.3H9.4V20H7zm2.4-7.2h2c1.2 0 1.8-.6 1.8-1.5s-.6-1.5-1.8-1.5h-2v3z" fill="white"/><circle cx="20" cy="20" r="4" fill="#a29bfe"/></svg>
+        <span>Budget App</span>
+      </a>
+      <div class="nav-links">
+        <a href="../#features">Features</a>
+        <a href="./">Docs</a>
+        <a href="https://github.com/seanlewis08/budget-app" class="nav-cta" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          GitHub
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="docs-layout">
+    <aside class="docs-sidebar">
+      <h3>Walkthrough</h3>
+      <nav class="docs-nav">
+        <a href="01-project-setup.html">
+          <span class="docs-nav-num">01</span>
+          Project Setup & Foundation
+        </a>
+        <a href="02-database-and-models.html">
+          <span class="docs-nav-num">02</span>
+          Database Models & Backend Core
+        </a>
+        <a href="03-plaid-integration.html">
+          <span class="docs-nav-num">03</span>
+          Plaid Integration & Accounts
+        </a>
+        <a href="04-categorization-engine.html">
+          <span class="docs-nav-num">04</span>
+          Categorization Engine
+        </a>
+        <a href="05-frontend-react.html">
+          <span class="docs-nav-num">05</span>
+          Frontend & React UI
+        </a>
+        <a href="06-advanced-features.html" class="active">
+          <span class="docs-nav-num">06</span>
+          Advanced Features
+        </a>
+        <a href="07-electron-and-deployment.html">
+          <span class="docs-nav-num">07</span>
+          Electron & Deployment
+        </a>
+      </nav>
+    </aside>
+
+    <main class="docs-content">
+      <div class="md-content">
+<h1 id="part-6-advanced-features">Part 6 — Advanced Features</h1>
+<p>This part covers four advanced systems: AI-powered financial insights, investment portfolio tracking, the background sync scheduler, and the standalone sync daemon for scheduled background updates.</p>
+<hr>
+<h2 id="61-ai-financial-insights">6.1 AI Financial Insights</h2>
+<p>The Insights feature uses Claude to analyze spending patterns and provide personalized financial advice through a chat interface with streaming responses.</p>
+<h3 id="backend-backendroutersinsightspy">Backend (<code>backend/routers/insights.py</code>)</h3>
+<p>The insights system uses two Claude models:</p>
+<ul>
+<li><strong>Claude Sonnet 4.5</strong> for the initial deep analysis (higher quality, more expensive)</li>
+<li><strong>Claude Haiku 4.5</strong> for follow-up chat questions (faster, cheaper)</li>
+</ul>
+<p>Both use Anthropic's prompt caching to reduce costs by ~90% on repeated calls with the same financial context.</p>
+<h4 id="financial-snapshot">Financial Snapshot</h4>
+<p>The <code>/api/insights/snapshot</code> endpoint builds a comprehensive financial snapshot from the database:</p>
+<pre><code class="language-python">@router.get(&quot;/snapshot&quot;)
+def get_snapshot(db: Session = Depends(get_db)):
+    &quot;&quot;&quot;Build a financial snapshot for AI analysis.&quot;&quot;&quot;
+    # Last 6 months of spending by category
+    # Monthly totals and trends
+    # Top merchants by spend
+    # Recurring charges
+    # Income vs. expenses
+    # Budget status
+    return snapshot_data
+</code></pre>
+<p>The snapshot is cached server-side for 5 minutes to avoid redundant database queries.</p>
+<h4 id="streaming-analysis">Streaming Analysis</h4>
+<p>The <code>/api/insights/analyze</code> endpoint streams the AI analysis using Server-Sent Events (SSE):</p>
+<pre><code class="language-python">@router.post(&quot;/analyze&quot;)
+async def analyze(body: dict, db: Session = Depends(get_db)):
+    &quot;&quot;&quot;Generate a full financial analysis using Claude Sonnet.&quot;&quot;&quot;
+    snapshot = _build_snapshot(db)
+    context = body.get(&quot;context&quot;, &quot;&quot;)  # Optional user context
+
+    system_prompt = &quot;&quot;&quot;You are a personal finance advisor analyzing spending data.
+    Provide specific, actionable insights. Reference actual numbers from the data.
+    Structure your analysis with clear sections:
+    1. Spending Overview
+    2. Notable Patterns
+    3. Opportunities to Save
+    4. Recommendations&quot;&quot;&quot;
+
+    def generate():
+        with client.messages.stream(
+            model=&quot;claude-sonnet-4-5-20250929&quot;,
+            max_tokens=4096,
+            system=[{
+                &quot;type&quot;: &quot;text&quot;,
+                &quot;text&quot;: system_prompt,
+                &quot;cache_control&quot;: {&quot;type&quot;: &quot;ephemeral&quot;},
+            }],
+            messages=[{
+                &quot;role&quot;: &quot;user&quot;,
+                &quot;content&quot;: f&quot;Financial data:\n{json.dumps(snapshot)}\n\n&quot;
+                           f&quot;Context: {context}\n\nAnalyze my finances.&quot;,
+            }],
+        ) as stream:
+            for text in stream.text_stream:
+                yield f&quot;data: {json.dumps({'text': text})}\n\n&quot;
+        yield &quot;data: [DONE]\n\n&quot;
+
+    return StreamingResponse(generate(), media_type=&quot;text/event-stream&quot;)
+</code></pre>
+<h4 id="follow-up-chat">Follow-up Chat</h4>
+<p>The <code>/api/insights/chat</code> endpoint handles conversational follow-ups using the same financial context but with the faster Haiku model:</p>
+<pre><code class="language-python">@router.post(&quot;/chat&quot;)
+async def chat(body: dict, db: Session = Depends(get_db)):
+    &quot;&quot;&quot;Follow-up questions about finances using Claude Haiku.&quot;&quot;&quot;
+    snapshot = _build_snapshot(db)
+    messages = body.get(&quot;messages&quot;, [])
+
+    def generate():
+        with client.messages.stream(
+            model=&quot;claude-haiku-4-5-20251001&quot;,
+            max_tokens=2048,
+            system=[{
+                &quot;type&quot;: &quot;text&quot;,
+                &quot;text&quot;: f&quot;You are a financial advisor. Data:\n{json.dumps(snapshot)}&quot;,
+                &quot;cache_control&quot;: {&quot;type&quot;: &quot;ephemeral&quot;},
+            }],
+            messages=messages,
+        ) as stream:
+            for text in stream.text_stream:
+                yield f&quot;data: {json.dumps({'text': text})}\n\n&quot;
+        yield &quot;data: [DONE]\n\n&quot;
+
+    return StreamingResponse(generate(), media_type=&quot;text/event-stream&quot;)
+</code></pre>
+<h3 id="frontend-frontendsrcpagesinsightsjsx">Frontend (<code>frontend/src/pages/Insights.jsx</code>)</h3>
+<p>The Insights page provides a full chat-like interface:</p>
+<ul>
+<li><strong>Context input</strong>: User can provide personal context (e.g., "I'm saving for a house") before generating analysis</li>
+<li><strong>Streaming display</strong>: Analysis text streams in real-time with a cursor indicator</li>
+<li><strong>Custom markdown renderer</strong>: Handles headers, bold text, bullet lists, and dollar amount highlighting</li>
+<li><strong>Multi-turn chat</strong>: Follow-up questions with conversation history</li>
+<li><strong>Persistence</strong>: Analysis and chat history saved to <code>localStorage</code> so they survive page refreshes</li>
+<li><strong>Timestamps</strong>: Shows when the last analysis was generated</li>
+</ul>
+<p>The streaming handler on the frontend:</p>
+<pre><code class="language-jsx">const handleAnalyze = async () =&gt; {
+  setIsAnalyzing(true)
+  setAnalysis('')
+
+  const response = await fetch('/api/insights/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ context }),
+  })
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let fullText = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    const chunk = decoder.decode(value)
+    const lines = chunk.split('\n')
+
+    for (const line of lines) {
+      if (line.startsWith('data: ') &amp;&amp; line !== 'data: [DONE]') {
+        const data = JSON.parse(line.slice(6))
+        fullText += data.text
+        setAnalysis(fullText)
+      }
+    }
+  }
+
+  setIsAnalyzing(false)
+  localStorage.setItem('insights_analysis', fullText)
+}
+</code></pre>
+<hr>
+<h2 id="62-investment-portfolio-tracking">6.2 Investment Portfolio Tracking</h2>
+<p>The investment system uses a separate SQLite database (<code>~/BudgetApp/investments.db</code>) to track holdings, prices, and investment transactions.</p>
+<h3 id="separate-database-backendinvestments_databasepy">Separate Database (<code>backend/investments_database.py</code>)</h3>
+<p>Mirrors the main database setup but points to <code>investments.db</code>:</p>
+<pre><code class="language-python">DB_DIR = Path.home() / &quot;BudgetApp&quot;
+DB_PATH = DB_DIR / &quot;investments.db&quot;
+DATABASE_URL = f&quot;sqlite:///{DB_PATH}&quot;
+
+engine = create_engine(DATABASE_URL, connect_args={
+    &quot;check_same_thread&quot;: False,
+    &quot;timeout&quot;: 30,
+})
+
+# WAL mode + foreign keys (same as main DB)
+@event.listens_for(engine, &quot;connect&quot;)
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute(&quot;PRAGMA journal_mode=WAL&quot;)
+    cursor.execute(&quot;PRAGMA foreign_keys=ON&quot;)
+    cursor.close()
+
+InvestmentsSessionLocal = sessionmaker(bind=engine)
+InvestmentsBase = declarative_base()
+</code></pre>
+<h3 id="investment-models-backendmodels_investmentspy">Investment Models (<code>backend/models_investments.py</code>)</h3>
+<p>Four models track the investment portfolio:</p>
+<p><strong>InvestmentAccount</strong>: Links to the main Account table via <code>plaid_item_id</code> for access token reuse.</p>
+<pre><code class="language-python">class InvestmentAccount(InvestmentsBase):
+    __tablename__ = &quot;investment_accounts&quot;
+
+    id = Column(Integer, primary_key=True)
+    plaid_item_id = Column(String(100))     # Links to Account.plaid_item_id
+    account_name = Column(String(200))
+    account_type = Column(String(50))       # taxable, roth, traditional_ira, 401k
+    plaid_account_id = Column(String(100))
+    last_synced_at = Column(DateTime)
+    connection_status = Column(String(20), default=&quot;connected&quot;)
+</code></pre>
+<p><strong>Security</strong>: Represents a financial instrument (stock, ETF, mutual fund).</p>
+<pre><code class="language-python">class Security(InvestmentsBase):
+    __tablename__ = &quot;securities&quot;
+
+    id = Column(Integer, primary_key=True)
+    plaid_security_id = Column(String(100), unique=True)
+    ticker = Column(String(20))           # nullable — some funds lack tickers
+    name = Column(String(200))
+    security_type = Column(String(50))    # stock, etf, mutual_fund, cash_equivalent
+    sector = Column(String(100))
+    close_price = Column(Float)
+    close_price_as_of = Column(Date)
+    price_source = Column(String(20))     # plaid, yfinance, manual
+</code></pre>
+<p><strong>Holding</strong>: A position in a security. Daily snapshots enable performance charting.</p>
+<pre><code class="language-python">class Holding(InvestmentsBase):
+    __tablename__ = &quot;holdings&quot;
+
+    id = Column(Integer, primary_key=True)
+    investment_account_id = Column(Integer, ForeignKey(&quot;investment_accounts.id&quot;))
+    security_id = Column(Integer, ForeignKey(&quot;securities.id&quot;))
+    quantity = Column(Float)
+    cost_basis = Column(Float)
+    cost_basis_per_unit = Column(Float)
+    current_value = Column(Float)
+    as_of_date = Column(Date)
+
+    # Unique constraint enables daily snapshots
+    __table_args__ = (
+        UniqueConstraint(&quot;investment_account_id&quot;, &quot;security_id&quot;, &quot;as_of_date&quot;),
+    )
+</code></pre>
+<p><strong>InvestmentTransaction</strong>: Buys, sells, dividends, and transfers.</p>
+<pre><code class="language-python">class InvestmentTransaction(InvestmentsBase):
+    __tablename__ = &quot;investment_transactions&quot;
+
+    id = Column(Integer, primary_key=True)
+    investment_account_id = Column(Integer, ForeignKey(&quot;investment_accounts.id&quot;))
+    security_id = Column(Integer, ForeignKey(&quot;securities.id&quot;))
+    plaid_investment_transaction_id = Column(String(100), unique=True)
+    date = Column(Date)
+    type = Column(String(50))  # buy, sell, dividend, transfer, capital_gain, cash
+    quantity = Column(Float)
+    price = Column(Float)
+    amount = Column(Float)
+    fees = Column(Float)
+</code></pre>
+<h3 id="plaid-investment-sync">Plaid Investment Sync</h3>
+<p>The Plaid service reuses the access token from the main Account table (since both checking and investment accounts live under the same Plaid item for the same institution):</p>
+<pre><code class="language-python">def sync_investments(self, account, inv_db):
+    &quot;&quot;&quot;Sync investment holdings and transactions from Plaid.&quot;&quot;&quot;
+    access_token = self.decrypt_token(account.plaid_access_token)
+
+    # 1. Fetch holdings
+    response = self.client.investments_holdings_get(
+        InvestmentsHoldingsGetRequest(access_token=access_token)
+    )
+
+    # 2. Upsert securities
+    for sec in response.securities:
+        existing = inv_db.query(Security).filter(
+            Security.plaid_security_id == sec.security_id
+        ).first()
+        if existing:
+            existing.close_price = sec.close_price
+            existing.close_price_as_of = sec.close_price_as_of
+        else:
+            inv_db.add(Security(
+                plaid_security_id=sec.security_id,
+                ticker=sec.ticker_symbol,
+                name=sec.name,
+                security_type=sec.type,
+                close_price=sec.close_price,
+            ))
+
+    # 3. Upsert holdings (today's snapshot)
+    for holding in response.holdings:
+        # Creates or updates today's holding snapshot
+        ...
+
+    # 4. Fetch investment transactions
+    response = self.client.investments_transactions_get(
+        InvestmentsTransactionsGetRequest(
+            access_token=access_token,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    )
+
+    # 5. Deduplicate and insert
+    for txn in response.investment_transactions:
+        existing = inv_db.query(InvestmentTransaction).filter(
+            InvestmentTransaction.plaid_investment_transaction_id == txn.investment_transaction_id
+        ).first()
+        if not existing:
+            inv_db.add(InvestmentTransaction(...))
+
+    inv_db.commit()
+</code></pre>
+<h3 id="live-price-fetcher-backendservicesprice_fetcherpy">Live Price Fetcher (<code>backend/services/price_fetcher.py</code>)</h3>
+<p>Fetches real-time stock prices using <code>yfinance</code> during market hours:</p>
+<pre><code class="language-python">import yfinance as yf
+from datetime import datetime
+import pytz
+
+class PriceFetcher:
+    @staticmethod
+    def is_market_open():
+        &quot;&quot;&quot;Check if US stock market is currently open.&quot;&quot;&quot;
+        et = pytz.timezone('US/Eastern')
+        now = datetime.now(et)
+        if now.weekday() &gt;= 5:  # Saturday/Sunday
+            return False
+        market_open = now.replace(hour=9, minute=30, second=0)
+        market_close = now.replace(hour=16, minute=0, second=0)
+        return market_open &lt;= now &lt;= market_close
+
+    @staticmethod
+    def fetch_all_prices(db):
+        &quot;&quot;&quot;Batch-fetch prices for all securities with tickers.&quot;&quot;&quot;
+        securities = db.query(Security).filter(
+            Security.ticker.isnot(None)
+        ).all()
+
+        tickers = [s.ticker for s in securities]
+        if not tickers:
+            return
+
+        # yfinance batch download
+        data = yf.download(tickers, period=&quot;1d&quot;, progress=False)
+
+        for security in securities:
+            try:
+                price = data['Close'][security.ticker].iloc[-1]
+                security.close_price = float(price)
+                security.close_price_as_of = datetime.now().date()
+                security.price_source = &quot;yfinance&quot;
+            except (KeyError, IndexError):
+                continue
+
+        db.commit()
+</code></pre>
+<h3 id="investment-api-endpoints-backendroutersinvestmentspy">Investment API Endpoints (<code>backend/routers/investments.py</code>)</h3>
+<p>Key endpoints:</p>
+<ul>
+<li><code>GET /api/investments/summary</code> — Portfolio totals: value, cost basis, gain/loss, day change</li>
+<li><code>GET /api/investments/holdings</code> — All holdings with per-security metrics</li>
+<li><code>GET /api/investments/performance?months=12</code> — Date series for the performance chart</li>
+<li><code>GET /api/investments/allocation</code> — Breakdown by security type and sector</li>
+<li><code>GET /api/investments/transactions</code> — Investment transaction history with type filtering</li>
+<li><code>POST /api/investments/link-token</code> — Plaid link token with investments product</li>
+<li><code>POST /api/investments/link/exchange</code> — Exchange token and create InvestmentAccount</li>
+<li><code>POST /api/investments/accounts/{id}/sync</code> — Manual sync trigger</li>
+<li><code>POST /api/investments/refresh-prices</code> — Manual price refresh via yfinance</li>
+</ul>
+<h3 id="frontend-frontendsrcpagesinvestmentsjsx">Frontend (<code>frontend/src/pages/Investments.jsx</code>)</h3>
+<p>The investments page has five sections stacked vertically:</p>
+<ol>
+<li><strong>Portfolio Overview</strong>: Stat cards showing total value, cost basis, gain/loss ($ and %), and day change</li>
+<li><strong>Holdings Table</strong>: Sortable by any column (ticker, shares, price, value, gain/loss, weight %). Green/red coloring on gain/loss columns</li>
+<li><strong>Charts Row</strong>: Performance line chart (portfolio vs. SPY benchmark) and allocation donut chart side by side</li>
+<li><strong>Transaction History</strong>: Filterable by type (buy, sell, dividend) with pagination</li>
+<li><strong>Account Management</strong>: Cards per investment account with sync buttons, plus "Link Investment Account" button for new Plaid connections</li>
+</ol>
+<hr>
+<h2 id="63-background-sync-scheduler">6.3 Background Sync Scheduler</h2>
+<p>The APScheduler-based scheduler runs three background jobs while the app is open:</p>
+<h3 id="backendservicessync_schedulerpy"><code>backend/services/sync_scheduler.py</code></h3>
+<pre><code class="language-python">from apscheduler.schedulers.background import BackgroundScheduler
+
+scheduler = BackgroundScheduler()
+
+def start_scheduler():
+    &quot;&quot;&quot;Start background sync jobs.&quot;&quot;&quot;
+
+    # Sync bank transactions every 4 hours
+    scheduler.add_job(
+        sync_all_accounts_job,
+        'interval',
+        hours=4,
+        id='sync_transactions',
+    )
+
+    # Sync investment holdings every 6 hours
+    scheduler.add_job(
+        sync_investments_job,
+        'interval',
+        hours=6,
+        id='sync_investments',
+    )
+
+    # Fetch stock prices every 30 min (weekdays, market hours only)
+    scheduler.add_job(
+        fetch_prices_job,
+        'interval',
+        minutes=30,
+        id='fetch_prices',
+    )
+
+    scheduler.start()
+
+
+def stop_scheduler():
+    scheduler.shutdown(wait=False)
+
+
+def sync_all_accounts_job():
+    &quot;&quot;&quot;Sync all connected bank accounts.&quot;&quot;&quot;
+    db = SessionLocal()
+    plaid = PlaidService()
+    accounts = db.query(Account).filter(
+        Account.plaid_connection_status == &quot;connected&quot;
+    ).all()
+    for account in accounts:
+        try:
+            plaid.sync_transactions(account, db, trigger=&quot;scheduled&quot;)
+        except Exception as e:
+            logger.error(f&quot;Scheduled sync failed for {account.name}: {e}&quot;)
+    db.close()
+
+
+def fetch_prices_job():
+    &quot;&quot;&quot;Refresh stock prices (only during market hours).&quot;&quot;&quot;
+    if not PriceFetcher.is_market_open():
+        return
+    inv_db = InvestmentsSessionLocal()
+    PriceFetcher.fetch_all_prices(inv_db)
+    inv_db.close()
+</code></pre>
+<p>The scheduler is started during FastAPI's <code>lifespan</code> startup and stopped during shutdown.</p>
+<hr>
+<h2 id="64-standalone-sync-daemon-backendsync_daemonpy">6.4 Standalone Sync Daemon (<code>backend/sync_daemon.py</code>)</h2>
+<p>For syncing transactions when the app isn't open, a standalone daemon runs as a macOS LaunchAgent (or cron job):</p>
+<pre><code class="language-python">#!/usr/bin/env python3
+&quot;&quot;&quot;
+Budget App Sync Daemon — runs independently of the Electron app.
+Designed for macOS LaunchAgent (or cron job) scheduling.
+&quot;&quot;&quot;
+
+def sync_all():
+    &quot;&quot;&quot;Sync all connected Plaid accounts once.&quot;&quot;&quot;
+    init_db()
+    db = SessionLocal()
+    plaid = PlaidService()
+
+    accounts = db.query(Account).filter(
+        Account.plaid_connection_status == &quot;connected&quot;
+    ).all()
+
+    for account in accounts:
+        try:
+            result = plaid.sync_transactions(account, db, trigger=&quot;scheduled&quot;)
+            logger.info(f&quot;  {account.name}: +{result['added']} new, &quot;
+                        f&quot;{result['modified']} updated, {result['removed']} removed&quot;)
+        except Exception as e:
+            logger.error(f&quot;  {account.name}: FAILED — {e}&quot;)
+    db.close()
+
+
+def backup_database():
+    &quot;&quot;&quot;Commit and push budget.db to a private Git repository.&quot;&quot;&quot;
+    # Stage, commit with descriptive message, push to origin
+    ...
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(&quot;--loop&quot;, action=&quot;store_true&quot;,
+                        help=&quot;Run continuously, syncing every 12 hours&quot;)
+    parser.add_argument(&quot;--no-backup&quot;, action=&quot;store_true&quot;,
+                        help=&quot;Skip Git backup after sync&quot;)
+    args = parser.parse_args()
+
+    if args.loop:
+        while True:
+            sync_all()
+            if not args.no_backup:
+                backup_database()
+            time.sleep(12 * 3600)
+    else:
+        sync_all()
+        if not args.no_backup:
+            backup_database()
+</code></pre>
+<h3 id="macos-launchagent-setup">macOS LaunchAgent Setup</h3>
+<p>To run the daemon automatically every 12 hours, create a LaunchAgent plist:</p>
+<pre><code class="language-xml">&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+&lt;!DOCTYPE plist PUBLIC &quot;-//Apple//DTD PLIST 1.0//EN&quot;
+  &quot;http://www.apple.com/DTDs/PropertyList-1.0.dtd&quot;&gt;
+&lt;plist version=&quot;1.0&quot;&gt;
+&lt;dict&gt;
+    &lt;key&gt;Label&lt;/key&gt;
+    &lt;string&gt;com.seanlewis.budgetapp.sync&lt;/string&gt;
+
+    &lt;key&gt;ProgramArguments&lt;/key&gt;
+    &lt;array&gt;
+        &lt;string&gt;/path/to/python3&lt;/string&gt;
+        &lt;string&gt;-m&lt;/string&gt;
+        &lt;string&gt;backend.sync_daemon&lt;/string&gt;
+    &lt;/array&gt;
+
+    &lt;key&gt;WorkingDirectory&lt;/key&gt;
+    &lt;string&gt;/path/to/budget-app&lt;/string&gt;
+
+    &lt;key&gt;StartInterval&lt;/key&gt;
+    &lt;integer&gt;43200&lt;/integer&gt;  &lt;!-- 12 hours in seconds --&gt;
+
+    &lt;key&gt;RunAtLoad&lt;/key&gt;
+    &lt;true/&gt;
+
+    &lt;key&gt;StandardOutPath&lt;/key&gt;
+    &lt;string&gt;~/BudgetApp/logs/sync.log&lt;/string&gt;
+
+    &lt;key&gt;StandardErrorPath&lt;/key&gt;
+    &lt;string&gt;~/BudgetApp/logs/sync.log&lt;/string&gt;
+&lt;/dict&gt;
+&lt;/plist&gt;
+</code></pre>
+<p>Install and start the agent:</p>
+<pre><code class="language-bash">cp com.seanlewis.budgetapp.sync.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.seanlewis.budgetapp.sync.plist
+</code></pre>
+<p>The daemon writes to <code>~/BudgetApp/logs/sync.log</code> and syncs to the same <code>budget.db</code> used by the desktop app.</p>
+<h3 id="git-backup">Git Backup</h3>
+<p>The daemon can optionally back up <code>budget.db</code> to a private Git repository after each sync:</p>
+<pre><code class="language-bash"># One-time setup
+cd ~/BudgetApp
+git init
+git remote add origin git@github.com:YOUR_USER/budget-app-data.git
+echo &quot;logs/&quot; &gt; .gitignore
+git add .gitignore budget.db
+git commit -m &quot;Initial database backup&quot;
+git push -u origin main
+</code></pre>
+<p>After each sync, the daemon commits with a descriptive message:</p>
+<pre><code>Backup 2025-02-16 07:28 — 3247 transactions, 12.3 MB
+</code></pre>
+<hr>
+<h2 id="65-archive-import-backendroutersarchivepy">6.5 Archive Import (<code>backend/routers/archive.py</code>)</h2>
+<p>For importing historical data from before Plaid was connected, the archive system handles Excel/CSV exports:</p>
+<ul>
+<li><code>GET /api/archive/scan</code> — Scans <code>~/BudgetApp/</code> for importable files</li>
+<li><code>POST /api/archive/import</code> — Imports an archive file with deduplication</li>
+<li><code>GET /api/archive/coverage</code> — Shows data coverage by year and source</li>
+</ul>
+<p>This enables building a complete financial history spanning years, even if Plaid was only connected recently.</p>
+<hr>
+<h2 id="whats-next">What's Next</h2>
+<p>With all features built, Part 7 wraps everything in an Electron desktop application and covers the build and packaging process.</p>
+<p>→ <a href="07-electron-and-deployment.md">Part 7: Electron Desktop App &amp; Deployment</a></p>
+      </div>
+      <div class="docs-nav-footer">
+        <a href="05-frontend-react.html" class="docs-nav-link prev">
+  <span class="label">&larr; Previous</span>
+  <span class="title">Frontend & React UI</span>
+</a>
+        <a href="07-electron-and-deployment.html" class="docs-nav-link next">
+  <span class="label">Next &rarr;</span>
+  <span class="title">Electron & Deployment</span>
+</a>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

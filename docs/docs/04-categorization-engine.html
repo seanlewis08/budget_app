@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Categorization Engine — Budget App Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../styles.css" />
+  <link rel="stylesheet" href="docs.css" />
+</head>
+<body>
+  <nav class="nav scrolled" id="nav">
+    <div class="nav-inner">
+      <a href="../" class="nav-logo">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#6c5ce7"/><path d="M7 20V8h4.5c2.5 0 4 1.2 4 3.2 0 1.5-.9 2.5-2.2 2.9l2.8 5.9h-2.8l-2.4-5.3H9.4V20H7zm2.4-7.2h2c1.2 0 1.8-.6 1.8-1.5s-.6-1.5-1.8-1.5h-2v3z" fill="white"/><circle cx="20" cy="20" r="4" fill="#a29bfe"/></svg>
+        <span>Budget App</span>
+      </a>
+      <div class="nav-links">
+        <a href="../#features">Features</a>
+        <a href="./">Docs</a>
+        <a href="https://github.com/seanlewis08/budget-app" class="nav-cta" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          GitHub
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="docs-layout">
+    <aside class="docs-sidebar">
+      <h3>Walkthrough</h3>
+      <nav class="docs-nav">
+        <a href="01-project-setup.html">
+          <span class="docs-nav-num">01</span>
+          Project Setup & Foundation
+        </a>
+        <a href="02-database-and-models.html">
+          <span class="docs-nav-num">02</span>
+          Database Models & Backend Core
+        </a>
+        <a href="03-plaid-integration.html">
+          <span class="docs-nav-num">03</span>
+          Plaid Integration & Accounts
+        </a>
+        <a href="04-categorization-engine.html" class="active">
+          <span class="docs-nav-num">04</span>
+          Categorization Engine
+        </a>
+        <a href="05-frontend-react.html">
+          <span class="docs-nav-num">05</span>
+          Frontend & React UI
+        </a>
+        <a href="06-advanced-features.html">
+          <span class="docs-nav-num">06</span>
+          Advanced Features
+        </a>
+        <a href="07-electron-and-deployment.html">
+          <span class="docs-nav-num">07</span>
+          Electron & Deployment
+        </a>
+      </nav>
+    </aside>
+
+    <main class="docs-content">
+      <div class="md-content">
+<h1 id="part-4-transaction-processing-categorization">Part 4 — Transaction Processing &amp; Categorization</h1>
+<p>This part covers the 3-tier categorization engine, the transaction review workflow, CSV import for historical data, and the seed data that bootstraps the system.</p>
+<hr>
+<h2 id="41-the-3-tier-categorization-engine">4.1 The 3-Tier Categorization Engine</h2>
+<p>Every transaction that enters the system — whether from Plaid or CSV import — is run through a priority cascade of three categorization tiers:</p>
+<pre><code>Transaction arrives
+       ↓
+  Tier 1: Amount Rules (exact amount match)
+       ↓ (miss)
+  Tier 2: Merchant Mappings (pattern match)
+       ↓ (miss)
+  Tier 3: Claude AI (fallback)
+</code></pre>
+<p>Once a tier matches, processing stops. The tier that matched is recorded in <code>categorization_tier</code>, and the confidence level determines whether the transaction is auto-confirmed or sent to the review queue.</p>
+<h3 id="backendservicescategorizepy"><code>backend/services/categorize.py</code></h3>
+<pre><code class="language-python">&quot;&quot;&quot;
+3-tier transaction categorization engine.
+
+Priority:
+  1. Amount Rules — exact amount match for ambiguous merchants (Apple, Venmo)
+  2. Merchant Mappings — regex pattern match against known merchants
+  3. Claude AI — LLM fallback for unknown merchants
+&quot;&quot;&quot;
+
+import re
+import os
+import logging
+from anthropic import Anthropic
+from ..models import AmountRule, MerchantMapping, Category, Transaction
+
+logger = logging.getLogger(__name__)
+
+AUTO_CONFIRM_THRESHOLD = 3  # Merchant mapping confidence needed for auto-confirm
+
+
+def categorize_transaction(transaction, db):
+    &quot;&quot;&quot;Run the transaction through all three tiers. Mutates the transaction in place.&quot;&quot;&quot;
+
+    description = (transaction.description or &quot;&quot;).lower()
+    merchant = (transaction.merchant_name or transaction.description or &quot;&quot;).lower()
+    amount = transaction.amount
+
+    # ── Tier 1: Amount Rules ──
+    rules = db.query(AmountRule).all()
+    for rule in rules:
+        pattern = rule.description_pattern.lower()
+        if pattern in description:
+            if abs(amount - rule.amount) &lt;= rule.tolerance:
+                transaction.predicted_category_id = rule.category_id
+                transaction.category_id = rule.category_id
+                transaction.categorization_tier = &quot;amount_rule&quot;
+                transaction.prediction_confidence = 1.0
+                transaction.status = &quot;auto_confirmed&quot;
+                logger.info(
+                    f&quot;Tier 1 match: {description} ${amount} → {rule.short_desc}&quot;
+                )
+                return {
+                    &quot;category_id&quot;: rule.category_id,
+                    &quot;short_desc&quot;: rule.short_desc,
+                    &quot;tier&quot;: &quot;amount_rule&quot;,
+                    &quot;status&quot;: &quot;auto_confirmed&quot;,
+                    &quot;confidence&quot;: 1.0,
+                }
+
+    # ── Tier 2: Merchant Mappings ──
+    mappings = (
+        db.query(MerchantMapping)
+        .order_by(MerchantMapping.confidence.desc())
+        .all()
+    )
+    for mapping in mappings:
+        try:
+            if re.search(mapping.merchant_pattern, merchant, re.IGNORECASE):
+                category = db.query(Category).get(mapping.category_id)
+                confidence = mapping.confidence
+                transaction.predicted_category_id = mapping.category_id
+                transaction.categorization_tier = &quot;merchant_map&quot;
+                transaction.prediction_confidence = confidence / 10.0
+
+                if confidence &gt;= AUTO_CONFIRM_THRESHOLD:
+                    transaction.category_id = mapping.category_id
+                    transaction.status = &quot;auto_confirmed&quot;
+                else:
+                    transaction.status = &quot;pending_review&quot;
+
+                return {
+                    &quot;category_id&quot;: mapping.category_id,
+                    &quot;short_desc&quot;: category.short_desc if category else None,
+                    &quot;tier&quot;: &quot;merchant_map&quot;,
+                    &quot;status&quot;: transaction.status,
+                    &quot;confidence&quot;: confidence,
+                }
+        except re.error:
+            # Invalid regex — try as literal string
+            if mapping.merchant_pattern.lower() in merchant:
+                # Same logic as above...
+                pass
+
+    # ── Tier 3: Claude AI ──
+    result = _categorize_with_ai(transaction, db)
+    if result:
+        transaction.predicted_category_id = result[&quot;category_id&quot;]
+        transaction.categorization_tier = &quot;ai&quot;
+        transaction.prediction_confidence = 0.7
+        transaction.status = &quot;pending_review&quot;  # AI never auto-confirms
+        return result
+
+    # No match at any tier
+    transaction.status = &quot;pending_review&quot;
+    return None
+</code></pre>
+<h3 id="tier-1-amount-rules">Tier 1: Amount Rules</h3>
+<p>Amount rules solve the "Apple problem" — when one merchant (like Apple or Venmo) charges different amounts for different services. For example:</p>
+<table>
+<thead>
+<tr>
+<th>Merchant</th>
+<th>Amount</th>
+<th>Category</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>APPLE.COM/BILL</td>
+<td>$15.89</td>
+<td>HBO Max</td>
+</tr>
+<tr>
+<td>APPLE.COM/BILL</td>
+<td>$6.99</td>
+<td>iCloud Storage</td>
+</tr>
+<tr>
+<td>APPLE.COM/BILL</td>
+<td>$9.99</td>
+<td>Apple TV+</td>
+</tr>
+<tr>
+<td>VENMO</td>
+<td>$816.87</td>
+<td>Rent</td>
+</tr>
+</tbody>
+</table>
+<p>The rule matches by description pattern AND exact amount (within a tolerance of $0.01). When matched, the transaction is auto-confirmed with 1.0 confidence — there's no ambiguity.</p>
+<h3 id="tier-2-merchant-mappings">Tier 2: Merchant Mappings</h3>
+<p>Merchant mappings are regex patterns that match merchant names to categories. They're ordered by confidence (highest first), and the confidence level determines auto-confirm behavior:</p>
+<ul>
+<li><strong>Confidence &gt;= 3</strong>: Auto-confirmed (reliable pattern seen multiple times)</li>
+<li><strong>Confidence &lt; 3</strong>: Sent to review queue (newer pattern, needs verification)</li>
+</ul>
+<p>When a user confirms a transaction in the review queue, the system creates or updates a merchant mapping, incrementing its confidence. Over time, frequently-seen merchants accumulate enough confidence to be auto-confirmed.</p>
+<h3 id="tier-3-claude-ai-fallback">Tier 3: Claude AI Fallback</h3>
+<p>For merchants not matched by rules or mappings, Claude AI provides a best-guess categorization:</p>
+<pre><code class="language-python">def _categorize_with_ai(transaction, db):
+    &quot;&quot;&quot;Use Claude to categorize an unknown transaction.&quot;&quot;&quot;
+    api_key = os.getenv(&quot;ANTHROPIC_API_KEY&quot;)
+    if not api_key:
+        return None
+
+    client = Anthropic(api_key=api_key)
+
+    # Get available categories
+    categories = db.query(Category).filter(Category.parent_id.isnot(None)).all()
+    category_list = &quot;\n&quot;.join(
+        f&quot;- {cat.short_desc} ({cat.display_name})&quot; for cat in categories
+    )
+
+    # Get recent confirmed transactions as few-shot examples
+    recent = (
+        db.query(Transaction)
+        .filter(Transaction.status.in_([&quot;confirmed&quot;, &quot;auto_confirmed&quot;]))
+        .order_by(Transaction.date.desc())
+        .limit(20)
+        .all()
+    )
+    examples = &quot;\n&quot;.join(
+        f&quot;- {t.merchant_name or t.description} → {t.category.short_desc}&quot;
+        for t in recent if t.category
+    )
+
+    prompt = f&quot;&quot;&quot;Categorize this bank transaction into one of these categories.
+
+Transaction:
+  Description: {transaction.description}
+  Merchant: {transaction.merchant_name}
+  Amount: ${transaction.amount}
+
+Available categories:
+{category_list}
+
+Recent examples:
+{examples}
+
+Respond with ONLY the short_desc value. Nothing else.&quot;&quot;&quot;
+
+    response = client.messages.create(
+        model=&quot;claude-haiku-4-5-20251001&quot;,
+        max_tokens=50,
+        messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: prompt}],
+    )
+
+    predicted = response.content[0].text.strip().lower()
+
+    # Look up the predicted category
+    category = (
+        db.query(Category)
+        .filter(Category.short_desc == predicted)
+        .first()
+    )
+
+    if category:
+        return {
+            &quot;category_id&quot;: category.id,
+            &quot;short_desc&quot;: category.short_desc,
+            &quot;tier&quot;: &quot;ai&quot;,
+            &quot;status&quot;: &quot;pending_review&quot;,
+            &quot;confidence&quot;: 0.7,
+        }
+    return None
+</code></pre>
+<p>Key design decisions:</p>
+<ul>
+<li>Uses <strong>Claude Haiku</strong> for speed and cost efficiency (categorization happens per-transaction)</li>
+<li><strong>Few-shot examples</strong>: Includes 20 recently confirmed transactions so the model learns from the user's actual labeling patterns</li>
+<li><strong>Always pending_review</strong>: AI predictions are never auto-confirmed — the user must verify</li>
+<li><strong>0.7 confidence</strong>: A reasonable default that distinguishes AI predictions from rule-based certainty</li>
+</ul>
+<hr>
+<h2 id="42-transaction-review-workflow">4.2 Transaction Review Workflow</h2>
+<p>The transaction status lifecycle is:</p>
+<pre><code>pending_review → pending_save (staged) → confirmed
+                       ↑                      ↑
+                 auto_confirmed ──────────────┘
+</code></pre>
+<h3 id="reviewing-a-transaction">Reviewing a Transaction</h3>
+<p>When a user confirms a category in the review queue, the backend:</p>
+<ol>
+<li>Sets <code>category_id</code> to the chosen category</li>
+<li>Updates <code>status</code> to <code>"pending_save"</code> (staged)</li>
+<li>Creates or updates a merchant mapping for future auto-categorization</li>
+</ol>
+<pre><code class="language-python">@router.post(&quot;/{transaction_id}/review&quot;)
+def review_transaction(transaction_id: int, body: dict, db: Session = Depends(get_db)):
+    txn = db.query(Transaction).get(transaction_id)
+    if not txn:
+        raise HTTPException(status_code=404)
+
+    category_id = body.get(&quot;category_id&quot;)
+    category = db.query(Category).get(category_id)
+
+    txn.category_id = category_id
+    txn.status = &quot;pending_save&quot;
+
+    # Learn from this review: create/update merchant mapping
+    merchant = (txn.merchant_name or txn.description or &quot;&quot;).strip()
+    if merchant:
+        existing = db.query(MerchantMapping).filter(
+            MerchantMapping.merchant_pattern == merchant.lower()
+        ).first()
+        if existing:
+            existing.category_id = category_id
+            existing.confidence = min(existing.confidence + 1, 10)
+        else:
+            db.add(MerchantMapping(
+                merchant_pattern=merchant.lower(),
+                category_id=category_id,
+                confidence=1,
+            ))
+
+    db.commit()
+    return {&quot;status&quot;: &quot;reviewed&quot;, &quot;category&quot;: category.short_desc}
+</code></pre>
+<h3 id="staging-and-committing">Staging and Committing</h3>
+<p>The two-phase review (pending_review → pending_save → confirmed) lets users batch-review transactions, inspect their choices in the "staged" section, and then commit everything at once. The commit endpoint simply updates all staged transactions:</p>
+<pre><code class="language-python">@router.post(&quot;/commit&quot;)
+def commit_staged(db: Session = Depends(get_db)):
+    staged = db.query(Transaction).filter(
+        Transaction.status == &quot;pending_save&quot;
+    ).all()
+    for txn in staged:
+        txn.status = &quot;confirmed&quot;
+    db.commit()
+    return {&quot;committed&quot;: len(staged)}
+</code></pre>
+<hr>
+<h2 id="43-csv-import-backendroutersimport_csvpy">4.3 CSV Import (<code>backend/routers/import_csv.py</code>)</h2>
+<p>Before Plaid is connected, historical transactions can be imported from bank CSV downloads. The importer supports multiple bank formats:</p>
+<pre><code class="language-python">@router.post(&quot;&quot;)
+async def import_csv(
+    file: UploadFile,
+    bank: str,  # &quot;discover&quot;, &quot;sofi_checking&quot;, &quot;sofi_savings&quot;, &quot;wellsfargo&quot;
+    db: Session = Depends(get_db),
+):
+    df = pd.read_csv(file.file)
+
+    # Normalize columns based on bank format
+    if bank == &quot;discover&quot;:
+        df = df.rename(columns={
+            &quot;Trans. Date&quot;: &quot;date&quot;,
+            &quot;Description&quot;: &quot;description&quot;,
+            &quot;Amount&quot;: &quot;amount&quot;,
+        })
+        # Discover: positive = expense (debit), negative = payment (credit)
+    elif bank == &quot;sofi_checking&quot;:
+        df = df.rename(columns={
+            &quot;Date&quot;: &quot;date&quot;,
+            &quot;Description&quot;: &quot;description&quot;,
+            &quot;Amount&quot;: &quot;amount&quot;,
+        })
+        # SoFi: negative = expense, positive = income
+        df[&quot;amount&quot;] = -df[&quot;amount&quot;]  # Flip to match Plaid convention
+    # ... similar for other banks
+
+    # Find the matching account
+    account = db.query(Account).filter(
+        Account.institution == bank.split(&quot;_&quot;)[0]
+    ).first()
+
+    imported = 0
+    skipped = 0
+    for _, row in df.iterrows():
+        # Dedup check
+        existing = db.query(Transaction).filter(
+            Transaction.account_id == account.id,
+            Transaction.date == row[&quot;date&quot;],
+            Transaction.description == row[&quot;description&quot;],
+            Transaction.amount == row[&quot;amount&quot;],
+        ).first()
+        if existing:
+            skipped += 1
+            continue
+
+        txn = Transaction(
+            account_id=account.id,
+            date=row[&quot;date&quot;],
+            description=row[&quot;description&quot;],
+            merchant_name=row[&quot;description&quot;],
+            amount=row[&quot;amount&quot;],
+            source=&quot;csv_import&quot;,
+            status=&quot;pending_review&quot;,
+        )
+        db.add(txn)
+        db.flush()
+
+        # Auto-categorize
+        categorize_transaction(txn, db)
+        imported += 1
+
+    db.commit()
+    return {&quot;imported&quot;: imported, &quot;skipped&quot;: skipped}
+</code></pre>
+<p>The auto-detect endpoint identifies the bank format from CSV headers:</p>
+<pre><code class="language-python">@router.post(&quot;/auto-detect&quot;)
+async def auto_detect_bank(file: UploadFile):
+    content = await file.read()
+    header = content.decode().split(&quot;\n&quot;)[0].lower()
+
+    if &quot;trans. date&quot; in header:
+        return {&quot;bank&quot;: &quot;discover&quot;}
+    elif &quot;sofi&quot; in header or (&quot;date&quot; in header and &quot;amount&quot; in header):
+        return {&quot;bank&quot;: &quot;sofi_checking&quot;}
+    elif &quot;wells fargo&quot; in header:
+        return {&quot;bank&quot;: &quot;wellsfargo&quot;}
+    return {&quot;bank&quot;: &quot;unknown&quot;}
+</code></pre>
+<hr>
+<h2 id="44-seed-data-backendservicesseed_datapy">4.4 Seed Data (<code>backend/services/seed_data.py</code>)</h2>
+<p>The seed function populates the database with default categories, accounts, amount rules, and high-confidence merchant mappings on first startup. It's idempotent — calling it multiple times has no effect.</p>
+<h3 id="parent-categories-18">Parent Categories (18)</h3>
+<pre><code class="language-python">PARENT_CATEGORIES = [
+    {&quot;short_desc&quot;: &quot;Food&quot;, &quot;display_name&quot;: &quot;Food&quot;, &quot;color&quot;: &quot;#FF6B6B&quot;},
+    {&quot;short_desc&quot;: &quot;Housing&quot;, &quot;display_name&quot;: &quot;Housing&quot;, &quot;color&quot;: &quot;#4ECDC4&quot;},
+    {&quot;short_desc&quot;: &quot;Transportation&quot;, &quot;display_name&quot;: &quot;Transportation&quot;, &quot;color&quot;: &quot;#45B7D1&quot;},
+    {&quot;short_desc&quot;: &quot;Insurance&quot;, &quot;display_name&quot;: &quot;Insurance&quot;, &quot;color&quot;: &quot;#96CEB4&quot;},
+    {&quot;short_desc&quot;: &quot;Utilities&quot;, &quot;display_name&quot;: &quot;Utilities&quot;, &quot;color&quot;: &quot;#FFEAA7&quot;},
+    {&quot;short_desc&quot;: &quot;Medical&quot;, &quot;display_name&quot;: &quot;Medical&quot;, &quot;color&quot;: &quot;#DDA0DD&quot;},
+    {&quot;short_desc&quot;: &quot;Government&quot;, &quot;display_name&quot;: &quot;Government&quot;, &quot;color&quot;: &quot;#778899&quot;},
+    {&quot;short_desc&quot;: &quot;Savings&quot;, &quot;display_name&quot;: &quot;Savings&quot;, &quot;color&quot;: &quot;#98D8C8&quot;},
+    {&quot;short_desc&quot;: &quot;Personal_Spending&quot;, &quot;display_name&quot;: &quot;Personal Spending&quot;, &quot;color&quot;: &quot;#F7DC6F&quot;},
+    {&quot;short_desc&quot;: &quot;Recreation_Entertainment&quot;, &quot;display_name&quot;: &quot;Recreation &amp; Entertainment&quot;, &quot;color&quot;: &quot;#BB8FCE&quot;},
+    {&quot;short_desc&quot;: &quot;Streaming_Services&quot;, &quot;display_name&quot;: &quot;Streaming Services&quot;, &quot;color&quot;: &quot;#E74C3C&quot;},
+    {&quot;short_desc&quot;: &quot;Education&quot;, &quot;display_name&quot;: &quot;Education&quot;, &quot;color&quot;: &quot;#3498DB&quot;},
+    {&quot;short_desc&quot;: &quot;Travel&quot;, &quot;display_name&quot;: &quot;Travel&quot;, &quot;color&quot;: &quot;#E67E22&quot;},
+    {&quot;short_desc&quot;: &quot;Misc&quot;, &quot;display_name&quot;: &quot;Miscellaneous&quot;, &quot;color&quot;: &quot;#95A5A6&quot;},
+    {&quot;short_desc&quot;: &quot;People&quot;, &quot;display_name&quot;: &quot;People&quot;, &quot;color&quot;: &quot;#1ABC9C&quot;},
+    {&quot;short_desc&quot;: &quot;Payment_and_Interest&quot;, &quot;display_name&quot;: &quot;Payment &amp; Interest&quot;, &quot;color&quot;: &quot;#7F8C8D&quot;},
+    {&quot;short_desc&quot;: &quot;Income&quot;, &quot;display_name&quot;: &quot;Income&quot;, &quot;color&quot;: &quot;#2ECC71&quot;, &quot;is_income&quot;: True},
+    {&quot;short_desc&quot;: &quot;Balance&quot;, &quot;display_name&quot;: &quot;Balance Adjustments&quot;, &quot;color&quot;: &quot;#BDC3C7&quot;},
+]
+</code></pre>
+<h3 id="subcategories-80">Subcategories (80+)</h3>
+<p>Each parent has multiple children. For example, "Food" has:</p>
+<ul>
+<li>Groceries, Fast Food, Restaurant, Coffee, Alcohol, Snacks/Convenience</li>
+</ul>
+<p>And "Streaming Services" has individual services as subcategories:</p>
+<ul>
+<li>Netflix, Spotify, Hulu, Disney Plus, YouTube Premium, HBO, Apple TV, iCloud, etc.</li>
+</ul>
+<p>Each subcategory can have <code>is_recurring=True</code> for the recurring monitor.</p>
+<h3 id="default-accounts-4">Default Accounts (4)</h3>
+<pre><code class="language-python">DEFAULT_ACCOUNTS = [
+    {&quot;name&quot;: &quot;Discover Card&quot;, &quot;institution&quot;: &quot;discover&quot;, &quot;account_type&quot;: &quot;credit&quot;},
+    {&quot;name&quot;: &quot;SoFi Checking&quot;, &quot;institution&quot;: &quot;sofi&quot;, &quot;account_type&quot;: &quot;checking&quot;},
+    {&quot;name&quot;: &quot;SoFi Savings&quot;, &quot;institution&quot;: &quot;sofi&quot;, &quot;account_type&quot;: &quot;savings&quot;},
+    {&quot;name&quot;: &quot;Wells Fargo Checking&quot;, &quot;institution&quot;: &quot;wellsfargo&quot;, &quot;account_type&quot;: &quot;checking&quot;},
+]
+</code></pre>
+<h3 id="initial-merchant-mappings-50">Initial Merchant Mappings (50+)</h3>
+<p>High-confidence mappings imported from analysis notebooks:</p>
+<pre><code class="language-python">SEED_MAPPINGS = [
+    (&quot;safeway&quot;, &quot;groceries&quot;, 5),
+    (&quot;trader joe&quot;, &quot;groceries&quot;, 5),
+    (&quot;target&quot;, &quot;groceries&quot;, 4),
+    (&quot;netflix&quot;, &quot;netflix&quot;, 5),
+    (&quot;spotify&quot;, &quot;spotify&quot;, 5),
+    (&quot;shell oil&quot;, &quot;gas_station&quot;, 5),
+    (&quot;chevron&quot;, &quot;gas_station&quot;, 5),
+    (&quot;uber&quot;, &quot;rideshare&quot;, 4),
+    # ... 40+ more
+]
+</code></pre>
+<p>The confidence values start at 4–5 (well above the auto-confirm threshold of 3), so these common merchants are auto-categorized from day one.</p>
+<hr>
+<h2 id="45-transaction-analysis-endpoints">4.5 Transaction Analysis Endpoints</h2>
+<p>The transactions router also provides several analysis endpoints for the frontend charts:</p>
+<h3 id="spending-by-category">Spending by Category</h3>
+<pre><code class="language-python">@router.get(&quot;/spending-by-category&quot;)
+def spending_by_category(month: str, db: Session = Depends(get_db)):
+    &quot;&quot;&quot;Monthly spending grouped by subcategory, excluding transfers.&quot;&quot;&quot;
+    # Groups by category, sums amounts, excludes income and balance categories
+</code></pre>
+<h3 id="monthly-trend">Monthly Trend</h3>
+<pre><code class="language-python">@router.get(&quot;/monthly-trend&quot;)
+def monthly_trend(months: int = 12, db: Session = Depends(get_db)):
+    &quot;&quot;&quot;Monthly spending totals for the trend line chart.&quot;&quot;&quot;
+</code></pre>
+<h3 id="cash-flow">Cash Flow</h3>
+<pre><code class="language-python">@router.get(&quot;/cash-flow&quot;)
+def cash_flow(year: int, db: Session = Depends(get_db)):
+    &quot;&quot;&quot;Biweekly cash flow with income and expense breakdowns.&quot;&quot;&quot;
+</code></pre>
+<h3 id="recurring-monitor">Recurring Monitor</h3>
+<pre><code class="language-python">@router.get(&quot;/recurring-monitor&quot;)
+def recurring_monitor(year: int, db: Session = Depends(get_db)):
+    &quot;&quot;&quot;Monthly grid of recurring transactions for tracking subscriptions.&quot;&quot;&quot;
+</code></pre>
+<p>These endpoints are consumed by the corresponding frontend pages covered in Part 5.</p>
+<hr>
+<h2 id="46-soft-delete-and-restore">4.6 Soft Delete and Restore</h2>
+<p>Deleting a transaction copies it to the <code>deleted_transactions</code> audit log before removing it:</p>
+<pre><code class="language-python">@router.delete(&quot;/{transaction_id}&quot;)
+def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
+    txn = db.query(Transaction).get(transaction_id)
+    if not txn:
+        raise HTTPException(status_code=404)
+
+    # Archive to deleted_transactions
+    db.add(DeletedTransaction(
+        original_id=txn.id,
+        account_id=txn.account_id,
+        account_name=txn.account.name if txn.account else None,
+        date=txn.date,
+        description=txn.description,
+        merchant_name=txn.merchant_name,
+        amount=txn.amount,
+        category_name=txn.category.short_desc if txn.category else None,
+        status=txn.status,
+        source=txn.source,
+    ))
+    db.delete(txn)
+    db.commit()
+    return {&quot;status&quot;: &quot;deleted&quot;}
+</code></pre>
+<p>The deleted transactions page can restore entries back to the main table or permanently purge them.</p>
+<hr>
+<h2 id="whats-next">What's Next</h2>
+<p>With the backend fully operational — syncing, categorizing, and storing transactions — Part 5 builds the entire React frontend: 13+ pages, routing, charts, and styles.</p>
+<p>→ <a href="05-frontend-react.md">Part 5: Frontend &amp; React UI</a></p>
+      </div>
+      <div class="docs-nav-footer">
+        <a href="03-plaid-integration.html" class="docs-nav-link prev">
+  <span class="label">&larr; Previous</span>
+  <span class="title">Plaid Integration & Accounts</span>
+</a>
+        <a href="05-frontend-react.html" class="docs-nav-link next">
+  <span class="label">Next &rarr;</span>
+  <span class="title">Frontend & React UI</span>
+</a>
+      </div>
+    </main>
+  </div>
+</body>
+</html>
