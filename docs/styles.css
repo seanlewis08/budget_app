@@ -426,11 +426,11 @@ code {
   transform: translateY(-2px);
 }
 
-.screenshot-card .screenshot-placeholder {
-  border: none;
-  border-radius: 0;
-  min-height: 220px;
-  padding: 40px 24px;
+.screenshot-card img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   border-bottom: 1px solid var(--border);
 }
 
