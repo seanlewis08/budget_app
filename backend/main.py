@@ -102,86 +102,113 @@ def get_stats():
 
 
 # ── Serve React frontend in production (packaged app) ──
-# When running as a PyInstaller bundle, serve the frontend static files
-# so that relative /api calls work on the same origin.
-def _get_frontend_dir() -> Path | None:
-    """Find the frontend/dist directory.
+#
+# In production, Electron ships the built React app as an extraResource
+# and passes its location via BUDGET_APP_FRONTEND_DIR.  The backend
+# mounts it as static files and registers a catch-all to support SPA
+# routing (all non-API GET requests → index.html).
+#
+# In development, Vite serves the frontend on :5173 and proxies /api
+# to this backend, so we do NOT register the catch-all (it would cause
+# 405 errors for POST/PUT/DELETE).
 
-    Search order:
-      0. BUDGET_APP_FRONTEND_DIR env var (set by Electron — most reliable)
-      1. PyInstaller _MEIPASS/frontend_dist  (bundled via spec datas=)
-      2. PyInstaller _MEIPASS/frontend/dist
-      3. Electron Resources/frontend/dist    (extraResources)
-      4. Next to the executable               (fallback)
-      5. Development: ../frontend/dist
+def _get_frontend_dir() -> Path | None:
+    """Locate the React frontend build directory.
+
+    Production: Electron sets BUDGET_APP_FRONTEND_DIR pointing to the
+    extraResources copy of frontend/dist.  Fallback searches common
+    paths relative to the PyInstaller binary.
+
+    Development: looks for frontend/dist relative to the project root.
     """
-    # Priority 0: Electron tells us exactly where the frontend is
+    is_frozen = getattr(sys, 'frozen', False)
+
+    # Print diagnostics — these go to stdout which Electron captures
+    # as [backend] lines, making them visible for debugging.
+    print(f"[frontend-discovery] frozen={is_frozen}", flush=True)
+
+    # ── Priority 1: env var set by Electron (most reliable) ──
     env_dir = os.environ.get("BUDGET_APP_FRONTEND_DIR")
     if env_dir:
         p = Path(env_dir)
-        if p.is_dir() and (p / "index.html").is_file():
-            logger.info(f"Frontend found via BUDGET_APP_FRONTEND_DIR: {p}")
+        has_index = p.is_dir() and (p / "index.html").is_file()
+        print(f"[frontend-discovery] BUDGET_APP_FRONTEND_DIR={env_dir}  "
+              f"is_dir={p.is_dir()}  has_index={has_index}", flush=True)
+        if has_index:
             return p
-        else:
-            logger.warning(f"BUDGET_APP_FRONTEND_DIR set to {env_dir} but not valid (dir={p.is_dir()})")
 
-    if getattr(sys, 'frozen', False):
-        meipass = Path(sys._MEIPASS)
-        exe_dir = Path(sys.executable).parent
-        resources_dir = exe_dir.parent
+    # ── Priority 2: search relative to the binary (frozen mode) ──
+    if is_frozen:
+        exe = Path(sys.executable)
+        exe_dir = exe.parent              # e.g. .app/Contents/Resources/backend/
+        resources_dir = exe_dir.parent    # e.g. .app/Contents/Resources/
 
         candidates = [
-            meipass / "frontend_dist",
-            meipass / "frontend" / "dist",
             resources_dir / "frontend" / "dist",
-            exe_dir / "frontend_dist",
-            exe_dir / "frontend" / "dist",
             exe_dir.parent / "frontend" / "dist",
+            exe_dir / "frontend" / "dist",
         ]
 
         for c in candidates:
-            has_index = (c / "index.html").is_file() if c.is_dir() else False
-            logger.info(f"Frontend search: {c} → dir={c.is_dir()}, index.html={has_index}")
-            if c.is_dir() and has_index:
-                logger.info(f"Using frontend dir: {c}")
+            has_index = c.is_dir() and (c / "index.html").is_file()
+            print(f"[frontend-discovery] checking {c}  "
+                  f"is_dir={c.is_dir()}  has_index={has_index}", flush=True)
+            if has_index:
                 return c
 
-        # Log diagnostic info if nothing found
-        logger.error("Frontend NOT FOUND in packaged mode!")
-        logger.error(f"  sys._MEIPASS = {meipass}")
-        logger.error(f"  sys.executable = {sys.executable}")
-        logger.error(f"  exe_dir = {exe_dir}")
-        logger.error(f"  resources_dir = {resources_dir}")
-        if meipass.is_dir():
-            logger.error(f"  _MEIPASS contents: {list(meipass.iterdir())}")
-    else:
-        dev_path = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-        if dev_path.is_dir():
-            return dev_path
+        # Nothing found — dump diagnostics
+        print(f"[frontend-discovery] FAILED — frontend not found!", flush=True)
+        print(f"[frontend-discovery]   executable = {exe}", flush=True)
+        print(f"[frontend-discovery]   exe_dir    = {exe_dir}", flush=True)
+        print(f"[frontend-discovery]   resources  = {resources_dir}", flush=True)
+        try:
+            print(f"[frontend-discovery]   resources contents = "
+                  f"{list(resources_dir.iterdir())}", flush=True)
+        except Exception:
+            pass
+        return None
+
+    # ── Development: frontend/dist next to the project root ──
+    dev_path = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+    if dev_path.is_dir():
+        return dev_path
     return None
 
 
-# Only serve the SPA catch-all in production (packaged) mode.
-# In development, Vite serves the frontend on its own port and proxies
-# /api calls to this backend.  Registering a catch-all @app.get("/{path}")
-# in dev mode causes Starlette to return 405 for POST/PUT/DELETE to any
-# path that also matches the catch-all, breaking API endpoints.
-_frontend_dir = _get_frontend_dir()
-_is_packaged = getattr(sys, 'frozen', False)
-if _frontend_dir and _frontend_dir.is_dir() and _is_packaged:
-    # Mount static assets (JS, CSS, images)
-    assets_dir = _frontend_dir / "assets"
-    if assets_dir.is_dir():
-        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="static-assets")
+def _setup_frontend_serving(app: FastAPI) -> None:
+    """Mount the React SPA on the FastAPI app (production only)."""
+    is_packaged = getattr(sys, 'frozen', False)
+    frontend_dir = _get_frontend_dir()
 
-    # Catch-all: serve index.html for any non-API route (SPA routing)
+    print(f"[frontend-serving] is_packaged={is_packaged}  "
+          f"frontend_dir={frontend_dir}", flush=True)
+
+    if not frontend_dir or not is_packaged:
+        if is_packaged:
+            print("[frontend-serving] WARNING: packaged mode but no frontend "
+                  "directory found — app will show JSON 404", flush=True)
+        return
+
+    # Mount /assets for JS, CSS, images (Vite puts them here)
+    assets_dir = frontend_dir / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)),
+                  name="static-assets")
+        print(f"[frontend-serving] mounted /assets → {assets_dir}", flush=True)
+
+    # Catch-all: serve index.html for any non-API GET route (SPA routing)
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
-        """Serve the React SPA for any route not matched by API endpoints."""
         if full_path.startswith("api/") or full_path == "health":
             from fastapi.responses import JSONResponse
             return JSONResponse(status_code=404, content={"detail": "Not found"})
-        file_path = _frontend_dir / full_path
+        file_path = frontend_dir / full_path
         if full_path and file_path.is_file():
             return FileResponse(str(file_path))
-        return FileResponse(str(_frontend_dir / "index.html"))
+        return FileResponse(str(frontend_dir / "index.html"))
+
+    print(f"[frontend-serving] SPA catch-all registered → {frontend_dir}",
+          flush=True)
+
+
+_setup_frontend_serving(app)

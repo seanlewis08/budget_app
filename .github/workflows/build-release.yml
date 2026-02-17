@@ -75,6 +75,35 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win
 
+      - name: Verify packaged app contains frontend (macOS)
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: |
+          echo "=== Verifying frontend in .app bundle ==="
+          APP_DIR=$(find dist/mac* -name "*.app" -type d | head -1)
+          echo "App bundle: $APP_DIR"
+          RESOURCES="$APP_DIR/Contents/Resources"
+          echo "--- Resources/frontend/dist/ ---"
+          ls -la "$RESOURCES/frontend/dist/" 2>&1 || echo "MISSING: frontend/dist not in Resources!"
+          echo "--- Checking index.html ---"
+          test -f "$RESOURCES/frontend/dist/index.html" && echo "OK: index.html found in app bundle" || (echo "FAIL: index.html missing from app bundle!" && exit 1)
+          echo "--- Checking backend binary ---"
+          ls -la "$RESOURCES/backend/" 2>&1 || echo "MISSING: backend not in Resources!"
+
+      - name: Verify packaged app contains frontend (Windows)
+        if: matrix.platform == 'win'
+        shell: bash
+        run: |
+          echo "=== Verifying frontend in unpacked build ==="
+          UNPACKED=$(find dist -name "win-unpacked" -type d | head -1)
+          if [ -n "$UNPACKED" ]; then
+            echo "Unpacked dir: $UNPACKED"
+            ls -la "$UNPACKED/resources/frontend/dist/" 2>&1 || echo "MISSING: frontend/dist not in resources!"
+            test -f "$UNPACKED/resources/frontend/dist/index.html" && echo "OK: index.html found" || echo "WARNING: index.html missing"
+          else
+            echo "No win-unpacked directory found (NSIS installer only) — skipping verification"
+          fi
+
       - name: Upload macOS artifacts
         if: matrix.platform == 'mac'
         uses: actions/upload-artifact@v4

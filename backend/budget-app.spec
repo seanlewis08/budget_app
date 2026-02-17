@@ -13,9 +13,10 @@ a = Analysis(
     ['run_app.py'],
     pathex=[str(Path.cwd().parent)],
     binaries=[],
-    datas=[
-        (str(Path.cwd().parent / 'frontend' / 'dist'), 'frontend_dist'),
-    ],
+    datas=[],
+    # NOTE: Frontend files are NOT bundled here. They ship as Electron
+    # extraResources (see package.json) and the backend receives the
+    # path via the BUDGET_APP_FRONTEND_DIR environment variable.
     hiddenimports=[
         'uvicorn.logging',
         'uvicorn.loops',
