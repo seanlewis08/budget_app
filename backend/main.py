@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Budget App",
     description="Personal finance tracker with AI-powered categorization",
-    version="0.1.0",
+    version="0.1.8",
     lifespan=lifespan,
 )
 
@@ -105,7 +105,7 @@ app.include_router(settings.router, prefix="/api/settings", tags=["Settings"])
 @app.get("/health")
 def health_check():
     """Health check endpoint used by Electron to verify backend is ready."""
-    return {"status": "ok", "version": "0.1.0"}
+    return {"status": "ok", "version": "0.1.8"}
 
 
 @app.get("/api/stats")

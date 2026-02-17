@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Budget App — Setup Wizard</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #0a0d12;
+      color: #e8eaed;
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+    }
+
+    /* ═══════════════════════════════════════
+       SPLASH SCREEN
+       ═══════════════════════════════════════ */
+    .splash {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      background: #0a0d12;
+      transition: opacity 0.8s ease, transform 0.8s ease;
+    }
+
+    .splash.fade-out {
+      opacity: 0;
+      transform: scale(1.05);
+      pointer-events: none;
+    }
+
+    .splash::before {
+      content: '';
+      position: absolute;
+      width: 600px;
+      height: 600px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(92, 224, 184, 0.08) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .splash-text {
+      text-align: center;
+      position: relative;
+      z-index: 1;
+    }
+
+    .splash-line {
+      display: block;
+      font-size: clamp(3rem, 8vw, 6rem);
+      font-weight: 900;
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+    }
+
+    .splash-line.line1 { color: #e8eaed; }
+
+    .splash-line.line2 { color: #5ce0b8; }
+
+    .line2 .splash-word {
+      background: linear-gradient(135deg, #5ce0b8 0%, #3ecfaa 40%, #7af0d0 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .splash-word {
+      display: inline-block;
+      opacity: 0;
+      transform: translateY(40px) scale(0.9);
+      animation: wordSplash 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    .line1 .splash-word:nth-child(1) { animation-delay: 0.2s; }
+    .line1 .splash-word:nth-child(2) { animation-delay: 0.4s; }
+    .line2 .splash-word:nth-child(1) { animation-delay: 0.7s; }
+    .line2 .splash-word:nth-child(2) { animation-delay: 0.9s; }
+
+    @keyframes wordSplash {
+      0% { opacity: 0; transform: translateY(40px) scale(0.9); }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .splash-cta {
+      margin-top: 3.5rem;
+      position: relative;
+      z-index: 1;
+      opacity: 0;
+      transform: translateY(20px);
+      animation: fadeUp 0.6s ease forwards;
+      animation-delay: 1.5s;
+    }
+
+    .particle {
+      position: absolute;
+      width: 2px;
+      height: 2px;
+      background: rgba(92, 224, 184, 0.3);
+      border-radius: 50%;
+      animation: float linear infinite;
+    }
+
+    @keyframes float {
+      0% { transform: translateY(100vh) scale(0); opacity: 0; }
+      10% { opacity: 1; }
+      90% { opacity: 1; }
+      100% { transform: translateY(-10vh) scale(1); opacity: 0; }
+    }
+
+    @keyframes fadeUp {
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ═══════════════════════════════════════
+       WIZARD CONTAINER
+       ═══════════════════════════════════════ */
+    .wizard {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      opacity: 0;
+      transition: opacity 0.6s ease 0.3s;
+    }
+
+    .wizard.visible { opacity: 1; }
+
+    /* Progress bar */
+    .wizard-progress {
+      padding: 24px 32px 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .progress-step {
+      flex: 1;
+      height: 3px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 2px;
+      transition: background 0.4s ease;
+      position: relative;
+    }
+
+    .progress-step.active {
+      background: #5ce0b8;
+    }
+
+    .progress-step.completed {
+      background: #5ce0b8;
+    }
+
+    .wizard-step-count {
+      font-size: 0.75rem;
+      color: rgba(255, 255, 255, 0.3);
+      font-weight: 500;
+      margin-left: 12px;
+      min-width: 32px;
+    }
+
+    /* Step content area */
+    .wizard-body {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .wizard-step {
+      position: absolute;
+      width: 100%;
+      max-width: 520px;
+      padding: 0 2rem;
+      opacity: 0;
+      transform: translateX(60px);
+      transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+      pointer-events: none;
+    }
+
+    .wizard-step.active {
+      opacity: 1;
+      transform: translateX(0);
+      pointer-events: auto;
+    }
+
+    .wizard-step.exit-left {
+      opacity: 0;
+      transform: translateX(-60px);
+    }
+
+    /* Step icon */
+    .step-icon {
+      width: 56px;
+      height: 56px;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 1.5rem;
+    }
+
+    .step-icon svg {
+      width: 28px;
+      height: 28px;
+    }
+
+    .step-icon.teal {
+      background: rgba(92, 224, 184, 0.12);
+    }
+
+    .step-icon.teal svg {
+      stroke: #5ce0b8;
+      fill: none;
+    }
+
+    .step-icon.blue {
+      background: rgba(96, 165, 250, 0.12);
+    }
+
+    .step-icon.blue svg {
+      stroke: #60a5fa;
+      fill: none;
+    }
+
+    .step-icon.purple {
+      background: rgba(167, 139, 250, 0.12);
+    }
+
+    .step-icon.purple svg {
+      stroke: #a78bfa;
+      fill: none;
+    }
+
+    .step-icon.amber {
+      background: rgba(251, 191, 36, 0.12);
+    }
+
+    .step-icon.amber svg {
+      stroke: #fbbf24;
+      fill: none;
+    }
+
+    .step-icon.green {
+      background: rgba(74, 222, 128, 0.12);
+    }
+
+    .step-icon.green svg {
+      stroke: #4ade80;
+      fill: none;
+    }
+
+    /* Typography */
+    .step-title {
+      font-size: 1.6rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.5rem;
+    }
+
+    .step-subtitle {
+      color: rgba(255, 255, 255, 0.45);
+      font-size: 0.95rem;
+      line-height: 1.6;
+      margin-bottom: 2rem;
+    }
+
+    /* ═══════════════════════════════════════
+       FORM ELEMENTS
+       ═══════════════════════════════════════ */
+
+    /* Selection cards */
+    .card-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 1.5rem;
+    }
+
+    .card-grid.single-col {
+      grid-template-columns: 1fr;
+    }
+
+    .select-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 14px 16px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .select-card:hover {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .select-card.selected {
+      background: rgba(92, 224, 184, 0.06);
+      border-color: rgba(92, 224, 184, 0.4);
+    }
+
+    .select-card .card-radio {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      flex-shrink: 0;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .select-card.selected .card-radio {
+      border-color: #5ce0b8;
+      background: #5ce0b8;
+    }
+
+    .select-card.selected .card-radio::after {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #0a0d12;
+    }
+
+    /* Checkbox variant */
+    .select-card .card-check {
+      width: 18px;
+      height: 18px;
+      border-radius: 5px;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      flex-shrink: 0;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .select-card.selected .card-check {
+      border-color: #5ce0b8;
+      background: #5ce0b8;
+    }
+
+    .select-card.selected .card-check::after {
+      content: '';
+      width: 10px;
+      height: 10px;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 12 12' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2.5 6L5 8.5L9.5 3.5' stroke='%230a0d12' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-size: contain;
+    }
+
+    .card-label {
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
+    .card-label small {
+      display: block;
+      color: rgba(255, 255, 255, 0.35);
+      font-weight: 400;
+      font-size: 0.75rem;
+      margin-top: 2px;
+    }
+
+    /* Text input */
+    .input-group {
+      margin-bottom: 1rem;
+    }
+
+    .input-group label {
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: rgba(255, 255, 255, 0.5);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    .text-input {
+      width: 100%;
+      padding: 12px 16px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      color: #e8eaed;
+      font-family: inherit;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.2s ease;
+    }
+
+    .text-input:focus {
+      border-color: rgba(92, 224, 184, 0.5);
+    }
+
+    .text-input::placeholder {
+      color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Toggle switch */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .toggle-row:last-child { border-bottom: none; }
+
+    .toggle-label {
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+
+    .toggle-label small {
+      display: block;
+      color: rgba(255, 255, 255, 0.35);
+      font-weight: 400;
+      font-size: 0.78rem;
+      margin-top: 2px;
+    }
+
+    .toggle {
+      width: 44px;
+      height: 24px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      cursor: pointer;
+      position: relative;
+      flex-shrink: 0;
+      margin-left: 16px;
+      transition: background 0.2s ease;
+    }
+
+    .toggle.on {
+      background: #5ce0b8;
+    }
+
+    .toggle::after {
+      content: '';
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      top: 3px;
+      left: 3px;
+      transition: transform 0.2s ease;
+    }
+
+    .toggle.on::after {
+      transform: translateX(20px);
+    }
+
+    /* ═══════════════════════════════════════
+       BUTTONS
+       ═══════════════════════════════════════ */
+    .wizard-footer {
+      padding: 20px 32px 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .btn {
+      padding: 12px 32px;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border: none;
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: rgba(255, 255, 255, 0.4);
+      padding: 12px 20px;
+    }
+
+    .btn-ghost:hover {
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    .btn-primary {
+      background: #5ce0b8;
+      color: #0a0d12;
+    }
+
+    .btn-primary:hover {
+      background: #7af0d0;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 20px rgba(92, 224, 184, 0.25);
+    }
+
+    .btn-primary:active {
+      transform: translateY(0);
+    }
+
+    .btn-outline {
+      background: transparent;
+      color: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+
+    .btn-outline:hover {
+      border-color: rgba(255, 255, 255, 0.3);
+      color: #fff;
+    }
+
+    .splash-btn {
+      background: transparent;
+      color: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 14px 48px;
+      font-size: 1rem;
+      font-weight: 600;
+      font-family: inherit;
+      border-radius: 12px;
+      cursor: pointer;
+      letter-spacing: 0.02em;
+      transition: all 0.3s ease;
+      backdrop-filter: blur(10px);
+    }
+
+    .splash-btn:hover {
+      color: #fff;
+      border-color: rgba(92, 224, 184, 0.4);
+      background: rgba(92, 224, 184, 0.08);
+      box-shadow: 0 0 30px rgba(92, 224, 184, 0.1);
+      transform: translateY(-1px);
+    }
+
+    /* ═══════════════════════════════════════
+       COMPLETION SCREEN
+       ═══════════════════════════════════════ */
+    .completion-check {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: rgba(74, 222, 128, 0.12);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 1.5rem;
+    }
+
+    .completion-check svg {
+      width: 36px;
+      height: 36px;
+      stroke: #4ade80;
+      fill: none;
+      stroke-dasharray: 60;
+      stroke-dashoffset: 60;
+      animation: drawCheck 0.6s ease forwards 0.3s;
+    }
+
+    @keyframes drawCheck {
+      to { stroke-dashoffset: 0; }
+    }
+
+    .confetti-container {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .confetti {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+      animation: confettiFall 2.5s ease forwards;
+    }
+
+    @keyframes confettiFall {
+      0% { transform: translateY(-20px) rotate(0deg); opacity: 1; }
+      100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+    }
+
+    /* ═══════════════════════════════════════
+       SKIP LINK
+       ═══════════════════════════════════════ */
+    .skip-link {
+      font-size: 0.78rem;
+      color: rgba(255, 255, 255, 0.25);
+      cursor: pointer;
+      transition: color 0.2s ease;
+      text-align: center;
+      margin-top: 0.5rem;
+    }
+
+    .skip-link:hover {
+      color: rgba(255, 255, 255, 0.5);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══ SPLASH SCREEN ═══ -->
+  <div class="splash" id="splash">
+    <div class="splash-text">
+      <span class="splash-line line1">
+        <span class="splash-word">Your</span>&nbsp;<span class="splash-word">Finances,</span>
+      </span>
+      <span class="splash-line line2">
+        <span class="splash-word">Your</span>&nbsp;<span class="splash-word">Machine.</span>
+      </span>
+    </div>
+    <div class="splash-cta">
+      <button class="splash-btn" id="continueBtn">Continue</button>
+    </div>
+  </div>
+
+  <!-- ═══ SETUP WIZARD ═══ -->
+  <div class="wizard" id="wizard">
+
+    <!-- Progress bar -->
+    <div class="wizard-progress">
+      <div class="progress-step" data-step="0"></div>
+      <div class="progress-step" data-step="1"></div>
+      <div class="progress-step" data-step="2"></div>
+      <div class="progress-step" data-step="3"></div>
+      <div class="progress-step" data-step="4"></div>
+      <span class="wizard-step-count" id="stepCount">1 / 5</span>
+    </div>
+
+    <!-- Step content -->
+    <div class="wizard-body">
+
+      <!-- STEP 0: Welcome -->
+      <div class="wizard-step active" data-step="0">
+        <div class="step-icon teal">
+          <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+            <polyline points="9 22 9 12 15 12 15 22"></polyline>
+          </svg>
+        </div>
+        <h2 class="step-title">Welcome to Budget App</h2>
+        <p class="step-subtitle">Your finances stay on your machine — no cloud, no third parties. Let's get you set up in a few quick steps.</p>
+        <div class="input-group">
+          <label>What should we call you?</label>
+          <input type="text" class="text-input" placeholder="Enter your name" id="userName" />
+        </div>
+      </div>
+
+      <!-- STEP 1: Bank Connection -->
+      <div class="wizard-step" data-step="1">
+        <div class="step-icon blue">
+          <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
+            <line x1="1" y1="10" x2="23" y2="10"></line>
+          </svg>
+        </div>
+        <h2 class="step-title">Connect Your Bank</h2>
+        <p class="step-subtitle">Link your accounts through Plaid to automatically import transactions. Everything is processed locally.</p>
+        <div class="card-grid single-col">
+          <div class="select-card" onclick="toggleCard(this, 'radio')">
+            <div class="card-radio"></div>
+            <div class="card-label">
+              Connect with Plaid
+              <small>Securely link checking, savings, and credit cards</small>
+            </div>
+          </div>
+          <div class="select-card" onclick="toggleCard(this, 'radio')">
+            <div class="card-radio"></div>
+            <div class="card-label">
+              Import CSV files
+              <small>Upload transaction exports from your bank</small>
+            </div>
+          </div>
+          <div class="select-card" onclick="toggleCard(this, 'radio')">
+            <div class="card-radio"></div>
+            <div class="card-label">
+              Skip for now
+              <small>You can connect accounts later in Settings</small>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 2: Budget Categories -->
+      <div class="wizard-step" data-step="2">
+        <div class="step-icon purple">
+          <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="8" y1="6" x2="21" y2="6"></line>
+            <line x1="8" y1="12" x2="21" y2="12"></line>
+            <line x1="8" y1="18" x2="21" y2="18"></line>
+            <line x1="3" y1="6" x2="3.01" y2="6"></line>
+            <line x1="3" y1="12" x2="3.01" y2="12"></line>
+            <line x1="3" y1="18" x2="3.01" y2="18"></line>
+          </svg>
+        </div>
+        <h2 class="step-title">Budget Categories</h2>
+        <p class="step-subtitle">Select the categories you'd like to track. You can customize these anytime.</p>
+        <div class="card-grid">
+          <div class="select-card selected" onclick="toggleCard(this, 'check')">
+            <div class="card-check"></div>
+            <div class="card-label">Housing</div>
+          </div>
+          <div class="select-card selected" onclick="toggleCard(this, 'check')">
+            <div class="card-check"></div>
+            <div class="card-label">Food & Dining</div>
+          </div>
+          <div class="select-card selected" onclick="toggleCard(this, 'check')">
+            <div class="card-check"></div>
+            <div class="card-label">Transportation</div>
+          </div>
+          <div class="select-card selected" onclick="toggleCard(this, 'check')">
+            <div class="card-check"></div>
+            <div class="card-label">Utilities</div>
+          </div>
+          <div class="select-card" onclick="toggleCard(this, 'check')">
+            <div class="card-check"></div>
+            <div class="card-label">Entertainment</div>
+          </div>
+          <div class="select-card" onclick="toggleCard(this, 'check')">
+            <div class="card-check"></div>
+            <div class="card-label">Healthcare</div>
+          </div>
+          <div class="select-card" onclick="toggleCard(this, 'check')">
+            <div class="card-check"></div>
+            <div class="card-label">Shopping</div>
+          </div>
+          <div class="select-card" onclick="toggleCard(this, 'check')">
+            <div class="card-check"></div>
+            <div class="card-label">Savings</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 3: AI Insights -->
+      <div class="wizard-step" data-step="3">
+        <div class="step-icon amber">
+          <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+          </svg>
+        </div>
+        <h2 class="step-title">AI-Powered Insights</h2>
+        <p class="step-subtitle">Enable intelligent analysis of your spending patterns. Your data never leaves your machine.</p>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            Spending analysis
+            <small>Weekly summaries of spending patterns</small>
+          </div>
+          <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            Budget alerts
+            <small>Get notified when nearing budget limits</small>
+          </div>
+          <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            Savings suggestions
+            <small>AI tips to help you save more</small>
+          </div>
+          <div class="toggle" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            Investment tracking
+            <small>Monitor portfolio performance</small>
+          </div>
+          <div class="toggle" onclick="this.classList.toggle('on')"></div>
+        </div>
+      </div>
+
+      <!-- STEP 4: All Done -->
+      <div class="wizard-step" data-step="4">
+        <div class="confetti-container" id="confettiContainer"></div>
+        <div class="completion-check">
+          <svg viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="4 12 9 17 20 6"></polyline>
+          </svg>
+        </div>
+        <h2 class="step-title">You're All Set!</h2>
+        <p class="step-subtitle" id="completionMsg">Your budget app is ready to go. Everything runs locally on your machine — your data, your rules.</p>
+      </div>
+
+    </div>
+
+    <!-- Footer nav -->
+    <div class="wizard-footer">
+      <button class="btn btn-ghost" id="backBtn" onclick="navigate(-1)" style="visibility: hidden;">Back</button>
+      <button class="btn btn-primary" id="nextBtn" onclick="navigate(1)">Get Started</button>
+    </div>
+  </div>
+
+  <script>
+    /* ── Splash ── */
+    const splash = document.getElementById('splash');
+    for (let i = 0; i < 20; i++) {
+      const p = document.createElement('div');
+      p.className = 'particle';
+      p.style.left = Math.random() * 100 + '%';
+      p.style.animationDuration = (8 + Math.random() * 12) + 's';
+      p.style.animationDelay = (Math.random() * 8) + 's';
+      p.style.width = p.style.height = (1 + Math.random() * 2) + 'px';
+      splash.appendChild(p);
+    }
+
+    document.getElementById('continueBtn').addEventListener('click', () => {
+      splash.classList.add('fade-out');
+      document.getElementById('wizard').classList.add('visible');
+      setTimeout(() => { splash.style.display = 'none'; }, 1000);
+    });
+
+    /* ── Wizard navigation ── */
+    let currentStep = 0;
+    const totalSteps = 5;
+    const steps = document.querySelectorAll('.wizard-step');
+    const progressSteps = document.querySelectorAll('.progress-step');
+    const stepCount = document.getElementById('stepCount');
+    const backBtn = document.getElementById('backBtn');
+    const nextBtn = document.getElementById('nextBtn');
+
+    function updateUI() {
+      // Progress bar
+      progressSteps.forEach((el, i) => {
+        el.classList.toggle('active', i === currentStep);
+        el.classList.toggle('completed', i < currentStep);
+      });
+      stepCount.textContent = `${currentStep + 1} / ${totalSteps}`;
+
+      // Steps
+      steps.forEach((el, i) => {
+        el.classList.remove('active', 'exit-left');
+        if (i === currentStep) el.classList.add('active');
+        if (i < currentStep) el.classList.add('exit-left');
+      });
+
+      // Buttons
+      backBtn.style.visibility = currentStep === 0 ? 'hidden' : 'visible';
+
+      if (currentStep === 0) {
+        nextBtn.textContent = 'Get Started';
+      } else if (currentStep === totalSteps - 1) {
+        nextBtn.textContent = 'Launch App';
+      } else {
+        nextBtn.textContent = 'Continue';
+      }
+
+      // Fire confetti on completion step
+      if (currentStep === totalSteps - 1) {
+        const name = document.getElementById('userName').value.trim();
+        if (name) {
+          document.getElementById('completionMsg').textContent =
+            `Great job, ${name}! Your budget app is ready. Everything runs locally on your machine — your data, your rules.`;
+        }
+        launchConfetti();
+      }
+    }
+
+    function navigate(direction) {
+      const next = currentStep + direction;
+      if (next < 0 || next >= totalSteps) {
+        if (next >= totalSteps) {
+          // "Launch App" clicked on final step
+          alert('Launching Budget App dashboard...');
+        }
+        return;
+      }
+      currentStep = next;
+      updateUI();
+    }
+
+    function toggleCard(card, type) {
+      if (type === 'radio') {
+        // Deselect siblings
+        card.parentElement.querySelectorAll('.select-card').forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+      } else {
+        card.classList.toggle('selected');
+      }
+    }
+
+    function launchConfetti() {
+      const container = document.getElementById('confettiContainer');
+      container.innerHTML = '';
+      const colors = ['#5ce0b8', '#60a5fa', '#a78bfa', '#fbbf24', '#f87171', '#4ade80'];
+      for (let i = 0; i < 40; i++) {
+        const c = document.createElement('div');
+        c.className = 'confetti';
+        c.style.left = Math.random() * 100 + '%';
+        c.style.top = '-10px';
+        c.style.background = colors[Math.floor(Math.random() * colors.length)];
+        c.style.animationDelay = (Math.random() * 0.8) + 's';
+        c.style.width = (6 + Math.random() * 6) + 'px';
+        c.style.height = (6 + Math.random() * 6) + 'px';
+        c.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px';
+        container.appendChild(c);
+      }
+    }
+
+    // Init
+    updateUI();
+  </script>
+
+</body>
+</html>

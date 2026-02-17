@@ -454,7 +454,7 @@ pyinstaller budget-app.spec
 <p>The root <code>package.json</code> configures <code>electron-builder</code> to produce distributable installers:</p>
 <pre><code class="language-json">{
   &quot;name&quot;: &quot;budget-app&quot;,
-  &quot;version&quot;: &quot;0.1.7&quot;,
+  &quot;version&quot;: &quot;0.1.8&quot;,
   &quot;main&quot;: &quot;electron/main.js&quot;,
   &quot;scripts&quot;: {
     &quot;build:frontend&quot;: &quot;cd frontend &amp;&amp; npm run build&quot;,
@@ -504,7 +504,7 @@ npm run build:frontend                # → frontend/dist/
 npm run build:backend                 # → backend/dist/budget-app-backend
 
 # 4. Package everything into a DMG
-npm run build                         # → dist/Budget App-0.1.7.dmg
+npm run build                         # → dist/Budget App-0.1.8.dmg
 </code></pre>
 <p>Step 4 runs <code>electron-builder</code>, which takes the Electron code, the frontend build, and the PyInstaller binary, and assembles them into a macOS <code>.app</code> bundle wrapped in a <code>.dmg</code>. The output goes to the <code>dist/</code> directory.</p>
 <hr>

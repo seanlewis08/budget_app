@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { BrowserRouter, Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { usePlaidLink } from 'react-plaid-link'
 import { LayoutDashboard, CheckSquare, TrendingUp, Wallet, Upload, Settings, FolderTree, Database, BarChart3, Repeat, LineChart, Sparkles } from 'lucide-react'
+import SplashScreen from './components/SplashScreen'
+import SetupWizard from './components/SetupWizard'
 import ReviewQueue from './pages/ReviewQueue'
 import Spending from './pages/Spending'
 import Budget from './pages/Budget'
@@ -191,6 +193,24 @@ function AppContent() {
 }
 
 export default function App() {
+  const isSetupDone = localStorage.getItem('budget_app_setup_complete') === 'true'
+  const [phase, setPhase] = useState(isSetupDone ? 'app' : 'splash')
+
+  const handleSplashContinue = () => setPhase('wizard')
+
+  const handleWizardComplete = () => {
+    localStorage.setItem('budget_app_setup_complete', 'true')
+    setPhase('app')
+  }
+
+  if (phase === 'splash') {
+    return <SplashScreen onContinue={handleSplashContinue} />
+  }
+
+  if (phase === 'wizard') {
+    return <SetupWizard onComplete={handleWizardComplete} />
+  }
+
   return (
     <BrowserRouter>
       <AppContent />

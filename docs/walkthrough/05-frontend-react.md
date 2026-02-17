@@ -154,7 +154,7 @@ function Sidebar({ pendingCount }) {
         <li><NavLink to="/categories"><FolderTree size={18} /><span>Categories</span></NavLink></li>
         <li><NavLink to="/settings"><Settings size={18} /><span>Settings</span></NavLink></li>
       </ul>
-      <div className="sidebar-footer">v0.1.7</div>
+      <div className="sidebar-footer">v0.1.8</div>
     </nav>
   )
 }

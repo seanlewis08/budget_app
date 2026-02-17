@@ -442,7 +442,7 @@ The root `package.json` configures `electron-builder` to produce distributable i
 ```json
 {
   "name": "budget-app",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "main": "electron/main.js",
   "scripts": {
     "build:frontend": "cd frontend && npm run build",
@@ -497,7 +497,7 @@ npm run build:frontend                # → frontend/dist/
 npm run build:backend                 # → backend/dist/budget-app-backend
 
 # 4. Package everything into a DMG
-npm run build                         # → dist/Budget App-0.1.7.dmg
+npm run build                         # → dist/Budget App-0.1.8.dmg
 ```
 
 Step 4 runs `electron-builder`, which takes the Electron code, the frontend build, and the PyInstaller binary, and assembles them into a macOS `.app` bundle wrapped in a `.dmg`. The output goes to the `dist/` directory.
