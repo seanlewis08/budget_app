@@ -578,7 +578,7 @@ The project uses GitHub Actions for automated builds. The workflow is defined in
 
 ### How It Works
 
-1. Push a version tag (e.g., `git tag v0.1.2 && git push origin v0.1.2`)
+1. Push a version tag (e.g., `git tag v0.1.3 && git push origin v0.1.3`)
 2. GitHub Actions spins up two runners in parallel:
    - **macOS runner**: Builds PyInstaller backend + Electron `.dmg` (Intel + ARM)
    - **Windows runner**: Builds PyInstaller backend + Electron `.exe` (x64)
