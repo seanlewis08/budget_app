@@ -66,17 +66,18 @@
     <main class="docs-content">
       <div class="md-content">
 <h1 id="part-7-electron-desktop-app-deployment">Part 7 — Electron Desktop App &amp; Deployment</h1>
-<p>This part covers wrapping the FastAPI backend and React frontend into a native desktop application using Electron, and the build/packaging process for distribution.</p>
+<p>The previous six parts built a complete web application — a FastAPI backend and a React frontend that communicate over HTTP. This final part wraps them into a native desktop application using Electron, then covers the build and packaging process that produces a distributable <code>.dmg</code> file users can install with a double-click.</p>
 <hr>
-<h2 id="71-architecture">7.1 Architecture</h2>
-<p>In production, the Electron app bundles everything into a single package:</p>
+<h2 id="71-architecture-development-vs-production">7.1 Architecture: Development vs. Production</h2>
+<p>In development, three processes run side by side: the FastAPI backend (port 8000), the Vite dev server (port 5173), and the Electron window. They're independent processes launched by <code>start.sh</code>, and you can restart any one without touching the others. The Vite proxy forwards <code>/api</code> requests to the backend.</p>
+<p>In production, everything collapses into a single application bundle:</p>
 <pre><code>Budget App.app
   └── Contents/
       └── Resources/
           ├── backend/
-          │   └── budget-app-backend  (PyInstaller binary)
+          │   └── budget-app-backend     ← PyInstaller binary
           ├── frontend/
-          │   └── dist/               (Vite build output)
+          │   └── dist/                  ← Vite build output
           └── app/
               ├── electron/
               │   ├── main.js
@@ -84,16 +85,53 @@
               │   └── preload.js
               └── package.json
 </code></pre>
-<p>In development, the three processes run separately:</p>
-<ul>
-<li>Backend: <code>uv run uvicorn backend.main:app --port 8000 --reload</code></li>
-<li>Frontend: <code>cd frontend &amp;&amp; npm run dev</code> (Vite dev server on port 5173)</li>
-<li>Electron: <code>NODE_ENV=development npx electron .</code> (loads from Vite)</li>
-</ul>
-<p>The <code>start.sh</code> script handles all three (see Part 1).</p>
+<p>The Electron app launches the PyInstaller binary as a child process, waits for it to respond on <code>/health</code>, then opens a browser window pointing at <code>http://localhost:8000</code>. The backend serves both the API and the React SPA from the same port — no proxy needed.</p>
+<p>Here's how the two modes compare:</p>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>Development</th>
+<th>Production</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Backend</td>
+<td><code>uv run uvicorn ... --reload</code></td>
+<td>PyInstaller binary</td>
+</tr>
+<tr>
+<td>Frontend</td>
+<td>Vite dev server (HMR)</td>
+<td>Static files served by FastAPI</td>
+</tr>
+<tr>
+<td>API proxy</td>
+<td>Vite proxy (<code>/api</code> → <code>:8000</code>)</td>
+<td>Same origin (both on <code>:8000</code>)</td>
+</tr>
+<tr>
+<td>Electron</td>
+<td><code>npx electron .</code></td>
+<td>Packaged <code>.app</code> / <code>.exe</code></td>
+</tr>
+<tr>
+<td>Window URL</td>
+<td><code>http://localhost:5173</code></td>
+<td><code>http://localhost:8000</code></td>
+</tr>
+<tr>
+<td>Backend lifecycle</td>
+<td>Managed by <code>start.sh</code></td>
+<td>Managed by <code>backend-manager.js</code></td>
+</tr>
+</tbody>
+</table>
 <hr>
 <h2 id="72-electron-main-process-electronmainjs">7.2 Electron Main Process (<code>electron/main.js</code>)</h2>
-<p>The main process creates the browser window and manages the backend lifecycle:</p>
+<p>The main process is Electron's entry point. It creates the browser window, manages the backend lifecycle, and handles shutdown.</p>
+<h3 id="creating-the-window">Creating the Window</h3>
 <pre><code class="language-javascript">const { app, BrowserWindow, shell } = require('electron')
 const path = require('path')
 const { startBackend, stopBackend, isBackendReady } = require('./backend-manager')
@@ -126,7 +164,7 @@ function createWindow() {
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
   } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'frontend', 'dist', 'index.html'))
+    mainWindow.loadURL('http://localhost:8000')
   }
 
   // Open external links in the default browser
@@ -136,19 +174,18 @@ function createWindow() {
   })
 }
 </code></pre>
-<p>Key design decisions:</p>
-<ul>
-<li><strong><code>show: false</code> + <code>ready-to-show</code></strong>: Prevents the white flash while the app loads</li>
-<li><strong><code>backgroundColor: '#0f1117'</code></strong>: Matches the dark theme so the window background blends seamlessly</li>
-<li><strong><code>titleBarStyle: 'hiddenInset'</code></strong>: Uses macOS's native title bar with the traffic lights inset (cleaner look)</li>
-<li><strong><code>contextIsolation: true</code></strong>: Security best practice — prevents the renderer from accessing Node.js APIs directly</li>
-<li><strong>External links</strong>: Opens any <code>&lt;a target="_blank"&gt;</code> links in the system browser instead of a new Electron window</li>
-</ul>
+<p>Several choices here are deliberate:</p>
+<p><code>show: false</code> combined with <code>ready-to-show</code> prevents the white flash that happens when the window opens before content has loaded. The window stays hidden until the page is ready, then appears instantly.</p>
+<p><code>backgroundColor: '#0f1117'</code> matches the app's dark theme. Without this, there's a brief moment between the window appearing and the CSS loading where the background would be white.</p>
+<p><code>titleBarStyle: 'hiddenInset'</code> on macOS moves the traffic light buttons (close, minimize, maximize) into the content area instead of sitting in a separate title bar. This gives the app a cleaner, more native feel.</p>
+<p><code>contextIsolation: true</code> and <code>nodeIntegration: false</code> are security best practices. They prevent the web content from directly accessing Node.js APIs — any communication between the renderer and Node.js must go through the preload script's explicit API.</p>
+<p>The <code>setWindowOpenHandler</code> catches any <code>&lt;a target="_blank"&gt;</code> links and opens them in the system browser instead of spawning a new Electron window. When Claude's AI analysis includes links to financial resources, they open in Chrome/Safari rather than a stripped-down Electron window.</p>
 <h3 id="startup-sequence">Startup Sequence</h3>
+<p>The startup waits for the backend before showing any UI:</p>
 <pre><code class="language-javascript">async function startup() {
   if (isDev) {
     // Dev mode: backend already running via start.sh
-    // Just wait for it to respond
+    console.log('Dev mode — waiting for backend...')
     let retries = 0
     while (retries &lt; 60) {
       if (await isBackendReady()) break
@@ -157,6 +194,7 @@ function createWindow() {
     }
   } else {
     // Production: start the bundled backend
+    console.log('Starting Python backend...')
     startBackend()
     let retries = 0
     while (retries &lt; 60) {
@@ -164,55 +202,96 @@ function createWindow() {
       await new Promise(r =&gt; setTimeout(r, 500))
       retries++
     }
+    if (retries &gt;= 60) {
+      console.error('Backend failed to start within 30 seconds')
+    }
   }
   createWindow()
 }
 
 app.whenReady().then(startup)
 </code></pre>
-<p>The startup polls the <code>/health</code> endpoint every 500ms for up to 30 seconds. In development, <code>start.sh</code> has already started the backend. In production, the backend-manager starts the PyInstaller binary.</p>
+<p>The polling loop checks <code>/health</code> every 500ms for up to 30 seconds. In development, <code>start.sh</code> has already launched the backend — Electron just waits for it to respond. In production, Electron launches the PyInstaller binary first, then polls.</p>
 <h3 id="shutdown">Shutdown</h3>
 <pre><code class="language-javascript">app.on('window-all-closed', () =&gt; {
   if (!isDev) stopBackend()
   if (process.platform !== 'darwin') app.quit()
 })
 
+app.on('activate', () =&gt; {
+  if (BrowserWindow.getAllWindows().length === 0) createWindow()
+})
+
 app.on('before-quit', () =&gt; {
   if (!isDev) stopBackend()
 })
 </code></pre>
-<p>In development, the backend is managed by <code>start.sh</code>, so Electron doesn't touch it. In production, Electron stops the backend process on quit.</p>
+<p>On macOS, closing all windows doesn't quit the app (standard Mac behavior). On Windows and Linux, it does. The <code>activate</code> event handles the macOS case where the user clicks the Dock icon to reopen the window.</p>
+<p>In development, Electron never touches the backend — <code>start.sh</code> handles that. In production, Electron sends <code>SIGTERM</code> to the backend process on quit.</p>
 <hr>
 <h2 id="73-backend-manager-electronbackend-managerjs">7.3 Backend Manager (<code>electron/backend-manager.js</code>)</h2>
-<p>Manages the Python backend process lifecycle:</p>
-<pre><code class="language-javascript">const { spawn } = require('child_process')
-const path = require('path')
-const http = require('http')
-
-let backendProcess = null
-const BACKEND_PORT = 8000
-
-function getBackendPath() {
-  // Production: PyInstaller bundle inside app resources
-  const ext = process.platform === 'win32' ? '.exe' : ''
-  return path.join(
-    process.resourcesPath,
-    'backend',
-    `budget-app-backend${ext}`
-  )
+<p>The backend manager handles starting, stopping, and health-checking the Python backend process.</p>
+<h3 id="killing-stale-processes">Killing Stale Processes</h3>
+<p>A subtle problem: if the app crashes or is force-quit, the backend process might keep running. The next launch would fail with "address already in use." The backend manager handles this preemptively:</p>
+<pre><code class="language-javascript">function killStaleBackend() {
+  try {
+    if (process.platform === 'win32') {
+      const out = execSync(
+        `netstat -ano | findstr :${BACKEND_PORT} | findstr LISTENING`,
+        { encoding: 'utf8', timeout: 5000 }
+      )
+      // Parse PIDs and kill them
+      ...
+    } else {
+      // macOS / Linux
+      const out = execSync(`lsof -ti:${BACKEND_PORT}`, {
+        encoding: 'utf8', timeout: 5000,
+      })
+      const pids = out.trim().split('\n').filter(Boolean)
+      for (const pid of pids) {
+        try { process.kill(Number(pid), 'SIGKILL') } catch {}
+      }
+    }
+  } catch {
+    // No process on port — expected on clean launch
+  }
 }
-
-function startBackend() {
+</code></pre>
+<p>This runs before every <code>startBackend()</code> call. If port 8000 is already in use, it kills whatever's listening there. The <code>try/catch</code> wrapper handles the clean case where nothing is running.</p>
+<h3 id="starting-the-backend">Starting the Backend</h3>
+<pre><code class="language-javascript">function startBackend() {
   if (backendProcess) return
 
-  const backendPath = getBackendPath()
-  backendProcess = spawn(backendPath, [], {
-    env: {
-      ...process.env,
-      BUDGET_APP_PORT: String(BACKEND_PORT),
-    },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  })
+  killStaleBackend()
+
+  if (isDev) {
+    // Development: run uvicorn directly
+    backendProcess = spawn('uv', [
+      'run', 'uvicorn', 'backend.main:app',
+      '--port', String(BACKEND_PORT), '--reload',
+    ], {
+      cwd: path.join(__dirname, '..'),
+      env: { ...process.env },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+  } else {
+    // Production: run PyInstaller bundle
+    const backendPath = path.join(
+      process.resourcesPath, 'backend', 'budget-app-backend'
+    )
+    const frontendDir = path.join(
+      process.resourcesPath, 'frontend', 'dist'
+    )
+
+    backendProcess = spawn(backendPath, [], {
+      env: {
+        ...process.env,
+        BUDGET_APP_PORT: String(BACKEND_PORT),
+        BUDGET_APP_FRONTEND_DIR: frontendDir,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+  }
 
   backendProcess.stdout.on('data', (data) =&gt;
     console.log(`[backend] ${data.toString().trim()}`)
@@ -220,35 +299,26 @@ function startBackend() {
   backendProcess.stderr.on('data', (data) =&gt;
     console.error(`[backend] ${data.toString().trim()}`)
   )
-  backendProcess.on('close', (code) =&gt; {
-    console.log(`Backend exited with code ${code}`)
-    backendProcess = null
-  })
 }
-
-function stopBackend() {
-  if (!backendProcess) return
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', backendProcess.pid, '/f', '/t'])
-  } else {
-    backendProcess.kill('SIGTERM')
-  }
-  backendProcess = null
-}
-
-function isBackendReady() {
+</code></pre>
+<p>In production, Electron passes two environment variables to the backend: <code>BUDGET_APP_PORT</code> (which port to listen on) and <code>BUDGET_APP_FRONTEND_DIR</code> (where the built React files live). The backend uses these to serve the SPA.</p>
+<p>The <code>stdio: ['pipe', 'pipe', 'pipe']</code> captures stdout and stderr from the backend. All Python output appears in Electron's console prefixed with <code>[backend]</code>, which makes debugging production issues much easier.</p>
+<h3 id="health-check">Health Check</h3>
+<pre><code class="language-javascript">function isBackendReady() {
   return new Promise((resolve) =&gt; {
-    const req = http.get(`http://localhost:${BACKEND_PORT}/health`, (res) =&gt;
-      resolve(res.statusCode === 200)
+    const req = http.get(
+      `http://localhost:${BACKEND_PORT}/health`,
+      (res) =&gt; resolve(res.statusCode === 200)
     )
     req.on('error', () =&gt; resolve(false))
     req.setTimeout(2000, () =&gt; { req.destroy(); resolve(false) })
   })
 }
 </code></pre>
+<p>A simple HTTP request to <code>/health</code>. Returns <code>true</code> if the backend responds with 200, <code>false</code> for any error or timeout. The startup loop calls this every 500ms.</p>
 <hr>
 <h2 id="74-preload-script-electronpreloadjs">7.4 Preload Script (<code>electron/preload.js</code>)</h2>
-<p>The preload script bridges the secure renderer and Node.js:</p>
+<p>The preload script is the secure bridge between the renderer process (your React app) and Node.js:</p>
 <pre><code class="language-javascript">const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -256,149 +326,228 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPlatform: () =&gt; process.platform,
 })
 </code></pre>
-<p>This exposes a minimal API to the renderer. The app currently uses it lightly, but it's the correct pattern for any future Electron ↔ renderer communication (e.g., native file dialogs, system notifications).</p>
+<p>This exposes a minimal <code>window.electronAPI</code> object to the renderer. The app currently uses it lightly — mainly to show the version number in Settings. But it's the correct pattern for any future Electron-to-renderer communication like native file dialogs, system notifications, or menu bar integration.</p>
+<p>With <code>contextIsolation: true</code>, the renderer can only access what's explicitly exposed through <code>contextBridge</code>. It can't import Node.js modules or access the filesystem directly. This matters for a finance app — you don't want a malicious ad in a third-party library to read your database.</p>
 <hr>
-<h2 id="75-building-the-python-backend">7.5 Building the Python Backend</h2>
-<p>PyInstaller bundles the Python backend into a standalone binary that doesn't require Python to be installed:</p>
-<pre><code class="language-bash"># Install PyInstaller (in the build optional dependencies)
-uv pip install pyinstaller
+<h2 id="75-serving-the-frontend-in-production">7.5 Serving the Frontend in Production</h2>
+<p>In development, the Vite dev server serves the React app and proxies API calls. In production, there's no Vite — the backend serves both the API and the frontend from the same server. This is handled in <code>backend/main.py</code>:</p>
+<pre><code class="language-python">def _get_frontend_dir() -&gt; Path | None:
+    &quot;&quot;&quot;Locate the React frontend build directory.&quot;&quot;&quot;
+    # Priority 1: BUDGET_APP_FRONTEND_DIR env var (set by Electron)
+    env_dir = os.environ.get(&quot;BUDGET_APP_FRONTEND_DIR&quot;)
+    if env_dir:
+        p = Path(env_dir)
+        if p.is_dir() and (p / &quot;index.html&quot;).is_file():
+            return p
 
-# Build the backend binary
-pyinstaller \
-  --name budget-app-backend \
-  --onefile \
-  --hidden-import uvicorn.logging \
-  --hidden-import uvicorn.protocols.http \
-  --hidden-import uvicorn.protocols.http.auto \
-  --hidden-import uvicorn.lifespan.on \
-  --add-data &quot;backend:backend&quot; \
-  --add-data &quot;.env:.env&quot; \
-  backend_entry.py
-</code></pre>
-<p>The entry point (<code>backend_entry.py</code>) starts uvicorn programmatically:</p>
-<pre><code class="language-python">#!/usr/bin/env python3
-&quot;&quot;&quot;Entry point for PyInstaller-bundled backend.&quot;&quot;&quot;
-import uvicorn
-import os
+    # Priority 2: search relative to the PyInstaller binary
+    if getattr(sys, 'frozen', False):
+        exe = Path(sys.executable)
+        candidates = [
+            exe.parent.parent / &quot;frontend&quot; / &quot;dist&quot;,
+            exe.parent / &quot;frontend&quot; / &quot;dist&quot;,
+        ]
+        for c in candidates:
+            if c.is_dir() and (c / &quot;index.html&quot;).is_file():
+                return c
+        return None
 
-if __name__ == &quot;__main__&quot;:
-    port = int(os.environ.get(&quot;BUDGET_APP_PORT&quot;, 8000))
-    uvicorn.run(&quot;backend.main:app&quot;, host=&quot;127.0.0.1&quot;, port=port)
+    # Priority 3: development — frontend/dist next to project root
+    dev_path = Path(__file__).resolve().parent.parent / &quot;frontend&quot; / &quot;dist&quot;
+    if dev_path.is_dir():
+        return dev_path
+    return None
 </code></pre>
-<p>The <code>--hidden-import</code> flags are necessary because PyInstaller's dependency analysis misses some uvicorn internals that are loaded dynamically.</p>
+<p>Three fallback strategies ensure the frontend is found regardless of where the app is installed. The env var approach is most reliable — Electron always knows its own <code>resourcesPath</code> and passes the exact location.</p>
+<p>Once found, the frontend is mounted with a SPA catch-all route:</p>
+<pre><code class="language-python">def _setup_frontend_serving(app: FastAPI) -&gt; None:
+    frontend_dir = _get_frontend_dir()
+    if not frontend_dir or not getattr(sys, 'frozen', False):
+        return  # Don't serve frontend in development
+
+    # Mount /assets for JS, CSS, images
+    assets_dir = frontend_dir / &quot;assets&quot;
+    if assets_dir.is_dir():
+        app.mount(&quot;/assets&quot;, StaticFiles(directory=str(assets_dir)),
+                  name=&quot;static-assets&quot;)
+
+    # Catch-all: non-API GET routes serve index.html (SPA routing)
+    @app.get(&quot;/{full_path:path}&quot;)
+    async def serve_spa(full_path: str):
+        if full_path.startswith(&quot;api/&quot;) or full_path == &quot;health&quot;:
+            return JSONResponse(status_code=404, content={&quot;detail&quot;: &quot;Not found&quot;})
+        file_path = frontend_dir / full_path
+        if full_path and file_path.is_file():
+            return FileResponse(str(file_path))
+        return FileResponse(str(frontend_dir / &quot;index.html&quot;))
+</code></pre>
+<p>The catch-all is the SPA routing trick: when you navigate to <code>/spending</code> or <code>/insights</code>, there's no actual <code>spending.html</code> file — it's all handled by React Router in the browser. The catch-all serves <code>index.html</code> for any path that isn't an API route or a real file, letting React Router take over client-side.</p>
+<p>The catch-all only activates in packaged mode (<code>sys.frozen == True</code>). In development, Vite handles this, and registering a catch-all GET route would break POST/PUT/DELETE requests by intercepting them.</p>
 <hr>
-<h2 id="76-building-the-electron-app">7.6 Building the Electron App</h2>
-<h3 id="frontend-build">Frontend Build</h3>
-<p>First, build the React frontend for production:</p>
-<pre><code class="language-bash">cd frontend
-npm run build
-# Output: frontend/dist/
+<h2 id="76-pyinstaller-bundling-python">7.6 PyInstaller: Bundling Python</h2>
+<p>PyInstaller analyzes the Python backend's import tree and bundles everything — Python interpreter, all dependencies, and the application code — into a single executable. Users don't need Python installed on their machine.</p>
+<h3 id="the-spec-file-backendbudget-appspec">The Spec File (<code>backend/budget-app.spec</code>)</h3>
+<p>The spec file is PyInstaller's build configuration. The key sections:</p>
+<pre><code class="language-python">a = Analysis(
+    ['run_app.py'],
+    pathex=[str(Path.cwd().parent)],
+    datas=[
+        (certifi_dir, 'certifi'),   # SSL certificates
+    ],
+    hiddenimports=[
+        # Uvicorn internals (loaded dynamically)
+        'uvicorn.logging',
+        'uvicorn.loops.auto',
+        'uvicorn.protocols.http.auto',
+        'uvicorn.protocols.websockets.auto',
+        'uvicorn.lifespan.on',
+        'sqlalchemy.dialects.sqlite',
+
+        # All routers (imported at runtime via main.py)
+        'backend.routers.transactions',
+        'backend.routers.categories',
+        'backend.routers.budgets',
+        'backend.routers.import_csv',
+        'backend.routers.notifications',
+        'backend.routers.accounts',
+        'backend.routers.archive',
+        'backend.routers.investments',
+        'backend.routers.insights',
+        'backend.routers.settings',
+
+        # All services
+        'backend.services.categorize',
+        'backend.services.seed_data',
+        'backend.services.plaid_service',
+        'backend.services.sync_scheduler',
+        'backend.services.financial_advisor',
+        'backend.services.price_fetcher',
+        'backend.services.archive_importer',
+
+        # CSV parsers
+        'backend.services.csv_parsers.discover',
+        'backend.services.csv_parsers.sofi',
+        'backend.services.csv_parsers.wellsfargo',
+
+        # Infrastructure
+        'backend.investments_database',
+        'backend.models_investments',
+    ],
+)
 </code></pre>
-<p>The production build generates static files that Electron loads directly via <code>loadFile()</code> (no dev server needed).</p>
-<h3 id="electron-packaging">Electron Packaging</h3>
-<p>The <code>package.json</code> at the project root configures electron-builder:</p>
+<p><strong>Hidden imports</strong> are the main challenge. PyInstaller discovers dependencies by tracing <code>import</code> statements statically, but many Python libraries use dynamic imports (like uvicorn loading protocol handlers, or SQLAlchemy loading dialect drivers). These need to be listed explicitly or the bundled app crashes at runtime with <code>ModuleNotFoundError</code>.</p>
+<p><strong>SSL certificates</strong> are bundled via the <code>datas</code> section. Without the certifi CA bundle, any HTTPS request (to Plaid, Anthropic, or Yahoo Finance) fails with <code>CERTIFICATE_VERIFY_FAILED</code>. The entry point (<code>run_app.py</code>) detects the frozen environment and points SSL at the bundled certificates:</p>
+<pre><code class="language-python">if getattr(sys, 'frozen', False):
+    _cert_file = os.path.join(sys._MEIPASS, 'certifi', 'cacert.pem')
+    if os.path.isfile(_cert_file):
+        os.environ.setdefault('SSL_CERT_FILE', _cert_file)
+        os.environ.setdefault('REQUESTS_CA_BUNDLE', _cert_file)
+</code></pre>
+<p><strong>Frontend files are NOT bundled</strong> in the PyInstaller binary. They ship as Electron <code>extraResources</code> instead (see the package.json configuration). This separation keeps the backend binary smaller and makes it possible to update the frontend without rebuilding the Python bundle.</p>
+<h3 id="build-command">Build Command</h3>
+<pre><code class="language-bash">cd backend
+pyinstaller budget-app.spec
+</code></pre>
+<p>The output goes to <code>backend/dist/budget-app-backend</code> — a single executable that's roughly 80–120 MB (the Python interpreter plus all dependencies).</p>
+<hr>
+<h2 id="77-electron-builder-packaging-everything">7.7 Electron Builder: Packaging Everything</h2>
+<p>The root <code>package.json</code> configures <code>electron-builder</code> to produce distributable installers:</p>
 <pre><code class="language-json">{
   &quot;name&quot;: &quot;budget-app&quot;,
-  &quot;version&quot;: &quot;0.1.0&quot;,
+  &quot;version&quot;: &quot;0.1.7&quot;,
   &quot;main&quot;: &quot;electron/main.js&quot;,
+  &quot;scripts&quot;: {
+    &quot;build:frontend&quot;: &quot;cd frontend &amp;&amp; npm run build&quot;,
+    &quot;build:backend&quot;: &quot;cd backend &amp;&amp; pyinstaller budget-app.spec&quot;,
+    &quot;build&quot;: &quot;npm run build:frontend &amp;&amp; electron-builder&quot;
+  },
   &quot;build&quot;: {
     &quot;appId&quot;: &quot;com.seanlewis.budgetapp&quot;,
     &quot;productName&quot;: &quot;Budget App&quot;,
-    &quot;directories&quot;: {
-      &quot;output&quot;: &quot;release&quot;
-    },
     &quot;files&quot;: [
       &quot;electron/**/*&quot;,
-      &quot;frontend/dist/**/*&quot;,
-      &quot;package.json&quot;
-    ],
-    &quot;extraResources&quot;: [
-      {
-        &quot;from&quot;: &quot;dist/budget-app-backend&quot;,
-        &quot;to&quot;: &quot;backend/budget-app-backend&quot;
-      }
+      &quot;frontend/dist/**/*&quot;
     ],
     &quot;mac&quot;: {
-      &quot;target&quot;: &quot;dmg&quot;,
       &quot;category&quot;: &quot;public.app-category.finance&quot;,
-      &quot;icon&quot;: &quot;electron/icons/icon.icns&quot;
+      &quot;icon&quot;: &quot;electron/icons/icon.icns&quot;,
+      &quot;target&quot;: [{ &quot;target&quot;: &quot;dmg&quot;, &quot;arch&quot;: [&quot;x64&quot;, &quot;arm64&quot;] }],
+      &quot;extraResources&quot;: [
+        { &quot;from&quot;: &quot;backend/dist/budget-app-backend&quot;,
+          &quot;to&quot;: &quot;backend/budget-app-backend&quot; },
+        { &quot;from&quot;: &quot;frontend/dist&quot;, &quot;to&quot;: &quot;frontend/dist&quot; }
+      ]
     },
     &quot;win&quot;: {
-      &quot;target&quot;: &quot;nsis&quot;,
-      &quot;icon&quot;: &quot;electron/icons/icon.ico&quot;
+      &quot;icon&quot;: &quot;electron/icons/icon.ico&quot;,
+      &quot;target&quot;: [{ &quot;target&quot;: &quot;nsis&quot;, &quot;arch&quot;: [&quot;x64&quot;] }],
+      &quot;extraResources&quot;: [
+        { &quot;from&quot;: &quot;backend/dist/budget-app-backend.exe&quot;,
+          &quot;to&quot;: &quot;backend/budget-app-backend.exe&quot; },
+        { &quot;from&quot;: &quot;frontend/dist&quot;, &quot;to&quot;: &quot;frontend/dist&quot; }
+      ]
     }
   }
 }
 </code></pre>
-<p>Build the distributable:</p>
-<pre><code class="language-bash"># After building both the Python backend and React frontend
-npx electron-builder --mac    # DMG for macOS
-npx electron-builder --win    # NSIS installer for Windows
+<p><code>files</code> tells electron-builder which files to include in the Electron app itself — the main process code and the frontend build output. <code>extraResources</code> copies additional files alongside the app (the PyInstaller binary and a second copy of the frontend for the backend to serve).</p>
+<p>The macOS build targets both <code>x64</code> (Intel) and <code>arm64</code> (Apple Silicon), producing a universal <code>.dmg</code>. The Windows build produces an NSIS installer.</p>
+<h3 id="full-build-pipeline">Full Build Pipeline</h3>
+<pre><code class="language-bash"># 1. Install dependencies
+uv sync                              # Python
+cd frontend &amp;&amp; npm install &amp;&amp; cd ..   # Node
+
+# 2. Build the React frontend
+npm run build:frontend                # → frontend/dist/
+
+# 3. Build the Python backend
+npm run build:backend                 # → backend/dist/budget-app-backend
+
+# 4. Package everything into a DMG
+npm run build                         # → dist/Budget App-0.1.7.dmg
 </code></pre>
-<p>The output goes to the <code>release/</code> directory.</p>
-<h3 id="build-pipeline-summary">Build Pipeline Summary</h3>
-<pre><code>1. uv sync                           # Install Python deps
-2. cd frontend &amp;&amp; npm install         # Install Node deps
-3. cd frontend &amp;&amp; npm run build       # Build React → frontend/dist/
-4. pyinstaller ... backend_entry.py   # Bundle Python → dist/budget-app-backend
-5. npx electron-builder --mac         # Package everything → release/Budget App.dmg
+<p>Step 4 runs <code>electron-builder</code>, which takes the Electron code, the frontend build, and the PyInstaller binary, and assembles them into a macOS <code>.app</code> bundle wrapped in a <code>.dmg</code>. The output goes to the <code>dist/</code> directory.</p>
+<hr>
+<h2 id="78-environment-and-configuration-in-production">7.8 Environment and Configuration in Production</h2>
+<h3 id="env-loading">.env Loading</h3>
+<p>In development, <code>.env</code> lives in the project root and <code>load_dotenv()</code> finds it. In production, the app runs from <code>/Applications/</code>, so the project root doesn't exist. The backend loads environment variables from two locations:</p>
+<pre><code class="language-python">load_dotenv(dotenv_path=Path.home() / &quot;BudgetApp&quot; / &quot;.env&quot;)
+load_dotenv()
 </code></pre>
+<p>The first call looks in <code>~/BudgetApp/.env</code> (next to the database), which is the right place for a production install. The second call is a fallback that checks the current working directory. Variables set by the first call aren't overwritten by the second.</p>
+<h3 id="database-settings">Database Settings</h3>
+<p>The Settings page saves API keys to the <code>app_settings</code> database table. On startup, the lifespan function loads these into environment variables:</p>
+<pre><code class="language-python">def _load_db_settings_into_env():
+    db = SessionLocal()
+    rows = db.query(AppSetting).all()
+    for row in rows:
+        if row.value and row.key in SETTING_ENV_MAP:
+            os.environ[SETTING_ENV_MAP[row.key]] = row.value
+    db.close()
+</code></pre>
+<p>This means users can configure everything through the app's Settings page — they never need to touch a <code>.env</code> file or a terminal.</p>
+<h3 id="graceful-degradation">Graceful Degradation</h3>
+<p>The app is designed to work without any API keys configured. A user can download the <code>.dmg</code>, install it, and immediately start importing CSV bank exports and manually categorizing transactions. The features that require external services degrade gracefully:</p>
+<ul>
+<li><strong>Without Plaid keys:</strong> The "Connect Bank" button shows a helpful message explaining how to get credentials. CSV import works normally.</li>
+<li><strong>Without Anthropic key:</strong> The AI categorization tier is skipped — transactions that can't be matched by amount rules or merchant patterns go to the review queue as <code>pending_review</code>. The Insights page explains that an API key is needed.</li>
+<li><strong>Without either:</strong> The app is a fully functional manual finance tracker with charts, budgets, categories, and all the visualization features.</li>
+</ul>
 <hr>
-<h2 id="77-production-vs-development">7.7 Production vs. Development</h2>
-<table>
-<thead>
-<tr>
-<th>Aspect</th>
-<th>Development</th>
-<th>Production</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Backend</td>
-<td><code>uv run uvicorn ... --reload</code></td>
-<td>PyInstaller binary</td>
-</tr>
-<tr>
-<td>Frontend</td>
-<td>Vite dev server (HMR)</td>
-<td>Static files from <code>frontend/dist/</code></td>
-</tr>
-<tr>
-<td>API proxy</td>
-<td>Vite proxy (<code>/api</code> → <code>:8000</code>)</td>
-<td>Direct localhost:8000</td>
-</tr>
-<tr>
-<td>Electron</td>
-<td><code>npx electron .</code></td>
-<td>Packaged <code>.app</code> / <code>.exe</code></td>
-</tr>
-<tr>
-<td>Window URL</td>
-<td><code>http://localhost:5173</code></td>
-<td><code>file:///frontend/dist/index.html</code></td>
-</tr>
-<tr>
-<td>Backend lifecycle</td>
-<td>Managed by <code>start.sh</code></td>
-<td>Managed by <code>backend-manager.js</code></td>
-</tr>
-</tbody>
-</table>
-<hr>
-<h2 id="78-project-summary">7.8 Project Summary</h2>
+<h2 id="79-project-summary">7.9 Project Summary</h2>
 <p>When fully assembled, the Budget App has:</p>
 <ul>
-<li><strong>4 bank accounts</strong> connected via Plaid (Discover, SoFi Checking, SoFi Savings, Wells Fargo)</li>
-<li><strong>3-tier categorization</strong> with 18 parent categories, 80+ subcategories, and 50+ merchant mappings</li>
-<li><strong>13+ frontend pages</strong>: Review Queue, Spending, Cash Flow, Recurring, Budget, Accounts, Investments, Insights, Data, Categories, Settings, Deleted Transactions, Sync History</li>
-<li><strong>AI-powered features</strong>: Transaction categorization (Claude Haiku), financial insights (Claude Sonnet + Haiku chat)</li>
-<li><strong>Investment tracking</strong>: Plaid + yfinance for portfolio analysis with daily snapshots</li>
-<li><strong>Background sync</strong>: APScheduler (in-app) + LaunchAgent daemon (background) + Git backup</li>
-<li><strong>Audit trail</strong>: SyncLog, DeletedTransactions, and detailed logging throughout</li>
+<li><strong>Multiple bank accounts</strong> connected via Plaid, with automatic sync every 4 hours</li>
+<li><strong>3-tier categorization</strong> — amount rules, merchant patterns, and Claude AI — with 18 parent categories, 80+ subcategories, and 50+ merchant mappings</li>
+<li><strong>13+ frontend pages</strong>: Review Queue, Spending, Cash Flow, Recurring Monitor, Budget, Accounts, Investments, Insights, Data, Categories, Settings, Deleted Transactions, Sync History</li>
+<li><strong>AI features</strong>: Transaction categorization (Claude Haiku) and financial insights (Claude Sonnet for analysis, Haiku for chat), both with prompt caching</li>
+<li><strong>Investment tracking</strong>: Plaid integration or manual entry, live prices via Yahoo Finance, daily portfolio snapshots</li>
+<li><strong>Background sync</strong>: APScheduler in-app (4h bank, 6h investments, 30min prices) plus standalone daemon for background syncing</li>
+<li><strong>Data integrity</strong>: SyncLog audit trail, soft-delete with restore, Fernet-encrypted Plaid tokens, deduplication on every import path</li>
+<li><strong>Archive import</strong>: Historical Excel/CSV import spanning 4+ years of bank-specific formats with automatic account and category resolution</li>
+<li><strong>Desktop distribution</strong>: Electron shell with PyInstaller-bundled backend, producing a single <code>.dmg</code></li>
 </ul>
-<p>The data lives entirely on the user's machine in <code>~/BudgetApp/</code> — no cloud services required beyond the Plaid and Anthropic APIs.</p>
+<p>The data lives entirely on your machine in <code>~/BudgetApp/</code> — two SQLite databases, an optional <code>.env</code> file, and a logs directory. No cloud services store your financial data; the only external calls are to Plaid (for bank connectivity), Anthropic (for AI features), and Yahoo Finance (for stock prices).</p>
 <hr>
 <h2 id="quick-reference-all-api-endpoints">Quick Reference: All API Endpoints</h2>
 <table>
@@ -433,7 +582,7 @@ npx electron-builder --win    # NSIS installer for Windows
 <tr>
 <td>POST</td>
 <td><code>/api/transactions/{id}/review</code></td>
-<td>Confirm category</td>
+<td>Confirm/reject category</td>
 </tr>
 <tr>
 <td>POST</td>
@@ -503,7 +652,7 @@ npx electron-builder --win    # NSIS installer for Windows
 <tr>
 <td>GET</td>
 <td><code>/api/categories</code></td>
-<td>List categories</td>
+<td>List all categories</td>
 </tr>
 <tr>
 <td>GET</td>
@@ -546,14 +695,19 @@ npx electron-builder --win    # NSIS installer for Windows
 <td>List accounts</td>
 </tr>
 <tr>
+<td>POST</td>
+<td><code>/api/accounts</code></td>
+<td>Create account</td>
+</tr>
+<tr>
 <td>GET</td>
 <td><code>/api/accounts/sync-history</code></td>
 <td>Sync audit log</td>
 </tr>
 <tr>
 <td>POST</td>
-<td><code>/api/accounts/link/create</code></td>
-<td>Plaid link token</td>
+<td><code>/api/accounts/link/token</code></td>
+<td>Create Plaid link token</td>
 </tr>
 <tr>
 <td>POST</td>
@@ -577,6 +731,16 @@ npx electron-builder --win    # NSIS installer for Windows
 </tr>
 <tr>
 <td>POST</td>
+<td><code>/api/accounts/{id}/reset-cursor</code></td>
+<td>Reset sync cursor</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td><code>/api/accounts/{id}</code></td>
+<td>Delete account</td>
+</tr>
+<tr>
+<td>POST</td>
 <td><code>/api/import</code></td>
 <td>CSV import</td>
 </tr>
@@ -593,12 +757,12 @@ npx electron-builder --win    # NSIS installer for Windows
 <tr>
 <td>POST</td>
 <td><code>/api/archive/import</code></td>
-<td>Import archive</td>
+<td>Import archive file</td>
 </tr>
 <tr>
 <td>GET</td>
 <td><code>/api/archive/coverage</code></td>
-<td>Data coverage</td>
+<td>Data coverage report</td>
 </tr>
 <tr>
 <td>GET</td>
@@ -626,6 +790,11 @@ npx electron-builder --win    # NSIS installer for Windows
 <td>Investment transactions</td>
 </tr>
 <tr>
+<td>GET</td>
+<td><code>/api/investments/accounts</code></td>
+<td>Investment accounts</td>
+</tr>
+<tr>
 <td>POST</td>
 <td><code>/api/investments/link-token</code></td>
 <td>Investment link token</td>
@@ -637,8 +806,28 @@ npx electron-builder --win    # NSIS installer for Windows
 </tr>
 <tr>
 <td>POST</td>
+<td><code>/api/investments/accounts/manual</code></td>
+<td>Create manual account</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/investments/accounts/{id}/holdings</code></td>
+<td>Add manual holding</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/investments/accounts/{id}/sync</code></td>
+<td>Sync investment account</td>
+</tr>
+<tr>
+<td>POST</td>
 <td><code>/api/investments/refresh-prices</code></td>
 <td>Refresh stock prices</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td><code>/api/investments/accounts/{id}</code></td>
+<td>Delete investment account</td>
 </tr>
 <tr>
 <td>GET</td>
@@ -654,6 +843,16 @@ npx electron-builder --win    # NSIS installer for Windows
 <td>POST</td>
 <td><code>/api/insights/chat</code></td>
 <td>Follow-up chat (SSE stream)</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/settings/</code></td>
+<td>Load settings</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/settings/</code></td>
+<td>Save settings</td>
 </tr>
 </tbody>
 </table>

@@ -1,515 +1,602 @@
 # Part 4 — Transaction Processing & Categorization
 
-This part covers the 3-tier categorization engine, the transaction review workflow, CSV import for historical data, and the seed data that bootstraps the system.
+Every transaction that enters the system — whether from Plaid syncing or a CSV upload — runs through a three-tier categorization engine before it reaches the user. This part covers that engine in detail, along with the review workflow that lets users train the system over time, the CSV import pipeline, and the analytics endpoints that power the frontend charts.
+
+By the end of this part, you'll understand the full lifecycle of a transaction: arrival → categorization → staging → confirmation → analytics.
 
 ---
 
 ## 4.1 The 3-Tier Categorization Engine
 
-Every transaction that enters the system — whether from Plaid or CSV import — is run through a priority cascade of three categorization tiers:
+The categorization engine is a priority cascade. When a transaction arrives, it's tested against three tiers in order. The first tier that produces a match wins — subsequent tiers are skipped.
 
 ```
-Transaction arrives
+Transaction arrives (from Plaid sync or CSV import)
        ↓
-  Tier 1: Amount Rules (exact amount match)
-       ↓ (miss)
-  Tier 2: Merchant Mappings (pattern match)
-       ↓ (miss)
-  Tier 3: Claude AI (fallback)
+  Tier 1: Amount Rules
+    Match on description pattern + exact dollar amount
+    Result: auto_confirmed (confidence 1.0)
+       ↓ (no match)
+  Tier 2: Merchant Mappings
+    Match on merchant name pattern (regex or literal)
+    Result: auto_confirmed if confidence ≥ 3, else pending_review
+       ↓ (no match)
+  Tier 3: Claude AI
+    Send description + amount + few-shot examples to Claude Haiku
+    Result: always pending_review (confidence 0.7)
+       ↓ (no match or AI unavailable)
+  No categorization — pending_review with no prediction
 ```
 
-Once a tier matches, processing stops. The tier that matched is recorded in `categorization_tier`, and the confidence level determines whether the transaction is auto-confirmed or sent to the review queue.
+This cascade design is intentional. Tier 1 rules are the most specific and fastest (exact amount matches). Tier 2 mappings are broader (merchant name patterns) and grow automatically as users confirm predictions. Tier 3 AI is the most flexible but slowest and requires an API key. Each tier is independent — the app works fine with just Tiers 1 and 2 if you don't have an Anthropic API key.
 
 ### `backend/services/categorize.py`
 
 ```python
 """
-3-tier transaction categorization engine.
+Priority Cascade Categorization Engine
 
-Priority:
-  1. Amount Rules — exact amount match for ambiguous merchants (Apple, Venmo)
-  2. Merchant Mappings — regex pattern match against known merchants
-  3. Claude AI — LLM fallback for unknown merchants
+Tier 1: Amount Rules — Apple/Venmo disambiguation by exact amount
+Tier 2: Merchant Mappings — regex patterns from merchant history
+Tier 3: Claude API — Few-shot for unknown merchants (fallback)
+
+Once a transaction matches at any tier, processing STOPS.
 """
 
-import re
 import os
+import re
 import logging
-from anthropic import Anthropic
-from ..models import AmountRule, MerchantMapping, Category, Transaction
+from typing import Optional
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
 AUTO_CONFIRM_THRESHOLD = 3  # Merchant mapping confidence needed for auto-confirm
 
 
-def categorize_transaction(transaction, db):
-    """Run the transaction through all three tiers. Mutates the transaction in place."""
+def categorize_transaction(
+    description: str,
+    amount: float,
+    db: Session,
+    use_ai: bool = True,
+) -> dict:
+    """
+    Run a transaction through the priority cascade.
 
-    description = (transaction.description or "").lower()
-    merchant = (transaction.merchant_name or transaction.description or "").lower()
-    amount = transaction.amount
+    Returns:
+        {
+            "category_id": int or None,
+            "short_desc": str or None,
+            "tier": "amount_rule" | "merchant_map" | "ai" | None,
+            "status": "auto_confirmed" | "pending_review",
+            "confidence": float,
+        }
+    """
+    from ..models import AmountRule, MerchantMapping, Category
 
-    # ── Tier 1: Amount Rules ──
-    rules = db.query(AmountRule).all()
-    for rule in rules:
-        pattern = rule.description_pattern.lower()
-        if pattern in description:
-            if abs(amount - rule.amount) <= rule.tolerance:
-                transaction.predicted_category_id = rule.category_id
-                transaction.category_id = rule.category_id
-                transaction.categorization_tier = "amount_rule"
-                transaction.prediction_confidence = 1.0
-                transaction.status = "auto_confirmed"
-                logger.info(
-                    f"Tier 1 match: {description} ${amount} → {rule.short_desc}"
-                )
-                return {
-                    "category_id": rule.category_id,
-                    "short_desc": rule.short_desc,
-                    "tier": "amount_rule",
-                    "status": "auto_confirmed",
-                    "confidence": 1.0,
-                }
+    desc_upper = description.upper().strip()
 
-    # ── Tier 2: Merchant Mappings ──
-    mappings = (
-        db.query(MerchantMapping)
-        .order_by(MerchantMapping.confidence.desc())
-        .all()
-    )
-    for mapping in mappings:
-        try:
-            if re.search(mapping.merchant_pattern, merchant, re.IGNORECASE):
-                category = db.query(Category).get(mapping.category_id)
-                confidence = mapping.confidence
-                transaction.predicted_category_id = mapping.category_id
-                transaction.categorization_tier = "merchant_map"
-                transaction.prediction_confidence = confidence / 10.0
-
-                if confidence >= AUTO_CONFIRM_THRESHOLD:
-                    transaction.category_id = mapping.category_id
-                    transaction.status = "auto_confirmed"
-                else:
-                    transaction.status = "pending_review"
-
-                return {
-                    "category_id": mapping.category_id,
-                    "short_desc": category.short_desc if category else None,
-                    "tier": "merchant_map",
-                    "status": transaction.status,
-                    "confidence": confidence,
-                }
-        except re.error:
-            # Invalid regex — try as literal string
-            if mapping.merchant_pattern.lower() in merchant:
-                # Same logic as above...
-                pass
-
-    # ── Tier 3: Claude AI ──
-    result = _categorize_with_ai(transaction, db)
+    # ── TIER 1: Amount Rules ──
+    result = _check_amount_rules(desc_upper, amount, db)
     if result:
-        transaction.predicted_category_id = result["category_id"]
-        transaction.categorization_tier = "ai"
-        transaction.prediction_confidence = 0.7
-        transaction.status = "pending_review"  # AI never auto-confirms
         return result
 
+    # ── TIER 2: Merchant Mappings ──
+    result = _check_merchant_mappings(desc_upper, db)
+    if result:
+        return result
+
+    # ── TIER 3: Claude API (if enabled) ──
+    if use_ai and os.getenv("ANTHROPIC_API_KEY"):
+        result = _classify_with_ai(description, amount, db)
+        if result:
+            return result
+
     # No match at any tier
-    transaction.status = "pending_review"
-    return None
+    return {
+        "category_id": None,
+        "short_desc": None,
+        "tier": None,
+        "status": "pending_review",
+        "confidence": 0,
+    }
 ```
+
+The function signature takes a `description` and `amount` (not a Transaction object), which makes it easy to test and call from multiple contexts — both the Plaid sync and CSV import pass these in.
 
 ### Tier 1: Amount Rules
 
-Amount rules solve the "Apple problem" — when one merchant (like Apple or Venmo) charges different amounts for different services. For example:
-
-| Merchant | Amount | Category |
-|----------|--------|----------|
-| APPLE.COM/BILL | $15.89 | HBO Max |
-| APPLE.COM/BILL | $6.99 | iCloud Storage |
-| APPLE.COM/BILL | $9.99 | Apple TV+ |
-| VENMO | $816.87 | Rent |
-
-The rule matches by description pattern AND exact amount (within a tolerance of $0.01). When matched, the transaction is auto-confirmed with 1.0 confidence — there's no ambiguity.
-
-### Tier 2: Merchant Mappings
-
-Merchant mappings are regex patterns that match merchant names to categories. They're ordered by confidence (highest first), and the confidence level determines auto-confirm behavior:
-
-- **Confidence >= 3**: Auto-confirmed (reliable pattern seen multiple times)
-- **Confidence < 3**: Sent to review queue (newer pattern, needs verification)
-
-When a user confirms a transaction in the review queue, the system creates or updates a merchant mapping, incrementing its confidence. Over time, frequently-seen merchants accumulate enough confidence to be auto-confirmed.
-
-### Tier 3: Claude AI Fallback
-
-For merchants not matched by rules or mappings, Claude AI provides a best-guess categorization:
+Amount rules solve a specific problem: merchants that charge different amounts for completely different services. The classic example is Apple billing. "APPLE.COM/BILL" shows up for Apple TV+ ($9.99), iCloud Storage ($2.99), Apple Music ($10.99), HBO Max ($15.89), and more. The description is identical — only the dollar amount tells them apart.
 
 ```python
-def _categorize_with_ai(transaction, db):
-    """Use Claude to categorize an unknown transaction."""
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        return None
+def _check_amount_rules(desc_upper: str, amount: float, db: Session) -> Optional[dict]:
+    """Tier 1: Check amount-based rules."""
+    from ..models import AmountRule, Category
 
-    client = Anthropic(api_key=api_key)
+    rules = db.query(AmountRule).all()
 
-    # Get available categories
-    categories = db.query(Category).filter(Category.parent_id.isnot(None)).all()
-    category_list = "\n".join(
-        f"- {cat.short_desc} ({cat.display_name})" for cat in categories
-    )
+    for rule in rules:
+        pattern = rule.description_pattern.upper()
+        if pattern in desc_upper:
+            if abs(amount - rule.amount) <= rule.tolerance:
+                category = db.query(Category).get(rule.category_id)
+                if category:
+                    return {
+                        "category_id": category.id,
+                        "short_desc": category.short_desc,
+                        "tier": "amount_rule",
+                        "status": "auto_confirmed",
+                        "confidence": 1.0,
+                    }
 
-    # Get recent confirmed transactions as few-shot examples
-    recent = (
-        db.query(Transaction)
-        .filter(Transaction.status.in_(["confirmed", "auto_confirmed"]))
-        .order_by(Transaction.date.desc())
-        .limit(20)
-        .all()
-    )
-    examples = "\n".join(
-        f"- {t.merchant_name or t.description} → {t.category.short_desc}"
-        for t in recent if t.category
-    )
-
-    prompt = f"""Categorize this bank transaction into one of these categories.
-
-Transaction:
-  Description: {transaction.description}
-  Merchant: {transaction.merchant_name}
-  Amount: ${transaction.amount}
-
-Available categories:
-{category_list}
-
-Recent examples:
-{examples}
-
-Respond with ONLY the short_desc value. Nothing else."""
-
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=50,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    predicted = response.content[0].text.strip().lower()
-
-    # Look up the predicted category
-    category = (
-        db.query(Category)
-        .filter(Category.short_desc == predicted)
-        .first()
-    )
-
-    if category:
-        return {
-            "category_id": category.id,
-            "short_desc": category.short_desc,
-            "tier": "ai",
-            "status": "pending_review",
-            "confidence": 0.7,
-        }
     return None
 ```
 
-Key design decisions:
+The matching logic is simple: if the description contains the pattern AND the amount is within tolerance, it's a match. The tolerance (usually $0.01–$0.50) handles minor price fluctuations like tax adjustments. Amount rules always auto-confirm with 1.0 confidence because they're the most specific match possible.
 
-- Uses **Claude Haiku** for speed and cost efficiency (categorization happens per-transaction)
-- **Few-shot examples**: Includes 20 recently confirmed transactions so the model learns from the user's actual labeling patterns
-- **Always pending_review**: AI predictions are never auto-confirmed — the user must verify
-- **0.7 confidence**: A reasonable default that distinguishes AI predictions from rule-based certainty
+### Tier 2: Merchant Mappings
+
+Merchant mappings match merchant names to categories using patterns. These are both pre-seeded (common merchants like Starbucks, Target, Netflix) and learned from user confirmations.
+
+```python
+def _check_merchant_mappings(desc_upper: str, db: Session) -> Optional[dict]:
+    """Tier 2: Check merchant pattern mappings."""
+    from ..models import MerchantMapping, Category
+
+    mappings = (
+        db.query(MerchantMapping)
+        .order_by(MerchantMapping.merchant_pattern.desc())
+        .all()
+    )
+
+    best_match = None
+    best_match_len = 0
+
+    for mapping in mappings:
+        pattern = mapping.merchant_pattern.upper()
+        try:
+            if re.search(pattern, desc_upper):
+                # Prefer longest (most specific) match
+                if len(pattern) > best_match_len:
+                    best_match = mapping
+                    best_match_len = len(pattern)
+        except re.error:
+            # If pattern isn't valid regex, try literal match
+            if pattern in desc_upper:
+                if len(pattern) > best_match_len:
+                    best_match = mapping
+                    best_match_len = len(pattern)
+
+    if best_match:
+        category = db.query(Category).get(best_match.category_id)
+        if category:
+            status = (
+                "auto_confirmed"
+                if best_match.confidence >= AUTO_CONFIRM_THRESHOLD
+                else "pending_review"
+            )
+            return {
+                "category_id": category.id,
+                "short_desc": category.short_desc,
+                "tier": "merchant_map",
+                "status": status,
+                "confidence": min(best_match.confidence / AUTO_CONFIRM_THRESHOLD, 1.0),
+            }
+
+    return None
+```
+
+There are two important design decisions here:
+
+**Longest match wins.** If both "STARBUCKS" and "STARBUCKS RESERVE" match, the longer pattern takes priority. This prevents a general "TARGET" mapping from overriding a more specific "TARGET OPTICAL" mapping.
+
+**Confidence determines auto-confirm.** The `AUTO_CONFIRM_THRESHOLD` is 3 — meaning a merchant mapping needs to be confirmed at least 3 times before future matches skip the review queue. This prevents a single incorrect confirmation from auto-categorizing all future transactions wrong.
+
+**Regex with literal fallback.** Patterns are tried as regex first, then as literal substrings if the regex is invalid. This means you can have simple patterns like "STARBUCKS" (literal match) and sophisticated patterns like "SAFEWAY.*#\d+" (regex match).
+
+### Tier 3: Claude AI
+
+For transactions that don't match any rules or mappings, the AI provides a best-guess categorization using Claude Haiku (chosen for speed and cost — categorization happens per-transaction):
+
+```python
+def _classify_with_ai(description: str, amount: float, db: Session) -> Optional[dict]:
+    """Tier 3: Use Claude API for unknown merchants with few-shot examples."""
+    from ..models import Category, Transaction
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic()
+
+        # Build the list of valid categories
+        categories = (
+            db.query(Category)
+            .filter(Category.parent_id.isnot(None))  # Only subcategories
+            .all()
+        )
+        category_list = "\n".join(
+            f"- {cat.short_desc} ({cat.parent.display_name if cat.parent else 'Uncategorized'})"
+            for cat in categories
+        )
+
+        # Get recent confirmed transactions as few-shot examples
+        examples = (
+            db.query(Transaction)
+            .filter(Transaction.status.in_(["confirmed", "auto_confirmed"]))
+            .filter(Transaction.category_id.isnot(None))
+            .order_by(Transaction.created_at.desc())
+            .limit(50)
+            .all()
+        )
+        examples_text = "\n".join(
+            f'"{ex.description}" ${ex.amount} → {ex.category.short_desc}'
+            for ex in examples if ex.category
+        )
+
+        prompt = f"""You are a personal finance categorization assistant.
+Given a bank transaction description and amount, classify it into one
+of the user's personal categories.
+
+VALID CATEGORIES (respond with one of these exact short_desc values):
+{category_list}
+
+EXAMPLES FROM THIS USER'S HISTORY:
+{examples_text}
+
+TRANSACTION TO CLASSIFY:
+Description: "{description}"
+Amount: ${amount}
+
+Respond with ONLY the exact short_desc value. No explanation, no quotes,
+no punctuation — just the short_desc."""
+
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=50,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        predicted = response.content[0].text.strip().lower()
+```
+
+The prompt design has several important features:
+
+**Constrained output.** The prompt asks for ONLY the `short_desc` value — no explanation, no punctuation. This makes parsing reliable. The model returns something like `fast_food` or `groceries`.
+
+**Few-shot examples from user history.** Including 50 recently confirmed transactions teaches the model the user's specific categorization patterns. If you always categorize DoorDash as "food_delivery" instead of "fast_food," the examples convey that preference.
+
+**Parent category context.** Each category in the list includes its parent (e.g., "groceries (Food)"), which helps the model understand the taxonomy structure.
+
+**Fuzzy matching on the response.** After getting the AI's response, the code tries multiple matching strategies: exact match, underscore/space normalization, and substring matching. This handles cases where the AI returns "fast food" instead of "fast_food" or "grocery" instead of "groceries".
+
+AI predictions are always set to `pending_review` — they're never auto-confirmed. The 0.7 confidence score distinguishes them from the higher-confidence rule-based matches.
 
 ---
 
-## 4.2 Transaction Review Workflow
+## 4.2 The Review Workflow
 
-The transaction status lifecycle is:
+Transactions flow through a staging pipeline before becoming permanent:
 
 ```
-pending_review → pending_save (staged) → confirmed
-                       ↑                      ↑
-                 auto_confirmed ──────────────┘
+                              ┌─── auto_confirmed ───────────────────────┐
+                              │    (high-confidence Tier 1/2 match)     │
+                              │                                          ↓
+arriving ─→ pending_review ─→ pending_save ─→ confirmed
+               (needs review)    (staged)       (finalized)
+                    ↑               │
+                    └── kick_back ──┘  (user changes mind)
 ```
 
-### Reviewing a Transaction
+This two-phase approach (stage then commit) lets users batch-review transactions: quickly categorize a bunch, inspect the staged list for mistakes, and commit everything at once.
 
-When a user confirms a category in the review queue, the backend:
+### Staging a Transaction
 
-1. Sets `category_id` to the chosen category
-2. Updates `status` to `"pending_save"` (staged)
-3. Creates or updates a merchant mapping for future auto-categorization
+When a user picks a category for a transaction, it's staged (not immediately committed):
 
 ```python
-@router.post("/{transaction_id}/review")
-def review_transaction(transaction_id: int, body: dict, db: Session = Depends(get_db)):
+@router.post("/{transaction_id}/stage")
+def stage_transaction(transaction_id: int, action: ReviewAction, db: Session = Depends(get_db)):
+    """Stage a transaction with a category (pending_save)."""
     txn = db.query(Transaction).get(transaction_id)
-    if not txn:
-        raise HTTPException(status_code=404)
+    category = db.query(Category).filter(
+        Category.short_desc == action.category_short_desc
+    ).first()
 
-    category_id = body.get("category_id")
-    category = db.query(Category).get(category_id)
-
-    txn.category_id = category_id
+    txn.category_id = category.id
     txn.status = "pending_save"
+    db.commit()
+```
 
-    # Learn from this review: create/update merchant mapping
-    merchant = (txn.merchant_name or txn.description or "").strip()
-    if merchant:
-        existing = db.query(MerchantMapping).filter(
-            MerchantMapping.merchant_pattern == merchant.lower()
+### Bulk Staging
+
+For efficiency, multiple transactions can be staged at once — either confirming the AI's predictions or assigning a new category to all of them:
+
+```python
+@router.post("/bulk-stage")
+def bulk_stage(action: BulkReviewAction, db: Session = Depends(get_db)):
+    """Bulk stage: confirm predicted categories for multiple transactions."""
+    transactions = db.query(Transaction).filter(
+        Transaction.id.in_(action.transaction_ids)
+    ).all()
+
+    if action.action == "confirm":
+        for txn in transactions:
+            if txn.predicted_category_id:
+                txn.category_id = txn.predicted_category_id
+                txn.status = "pending_save"
+    elif action.action == "change" and action.category_short_desc:
+        category = db.query(Category).filter(
+            Category.short_desc == action.category_short_desc
         ).first()
-        if existing:
-            existing.category_id = category_id
-            existing.confidence = min(existing.confidence + 1, 10)
-        else:
-            db.add(MerchantMapping(
-                merchant_pattern=merchant.lower(),
-                category_id=category_id,
-                confidence=1,
-            ))
+        for txn in transactions:
+            txn.category_id = category.id
+            txn.status = "pending_save"
 
     db.commit()
-    return {"status": "reviewed", "category": category.short_desc}
 ```
 
-### Staging and Committing
+### Committing Staged Transactions
 
-The two-phase review (pending_review → pending_save → confirmed) lets users batch-review transactions, inspect their choices in the "staged" section, and then commit everything at once. The commit endpoint simply updates all staged transactions:
+The commit endpoint is where the system learns. When staged transactions are committed, the system creates or updates merchant mappings based on the user's choices:
 
 ```python
-@router.post("/commit")
+@router.post("/staged/commit")
 def commit_staged(db: Session = Depends(get_db)):
-    staged = db.query(Transaction).filter(
+    """Commit all pending_save transactions and update merchant mappings."""
+    transactions = db.query(Transaction).filter(
         Transaction.status == "pending_save"
     ).all()
-    for txn in staged:
+
+    seen_mappings = {}  # cache to avoid duplicate inserts in same batch
+
+    for txn in transactions:
         txn.status = "confirmed"
+
+        # Learn from this confirmation
+        if txn.merchant_name and txn.category_id:
+            pattern = txn.merchant_name.upper()
+            mapping = seen_mappings.get(pattern)
+            if mapping is None:
+                mapping = db.query(MerchantMapping).filter(
+                    MerchantMapping.merchant_pattern == pattern
+                ).first()
+
+            if mapping:
+                if mapping.category_id == txn.category_id:
+                    mapping.confidence += 1  # Same category = more confident
+                else:
+                    mapping.category_id = txn.category_id
+                    mapping.confidence = 1   # Changed category = reset
+                seen_mappings[pattern] = mapping
+            else:
+                new_mapping = MerchantMapping(
+                    merchant_pattern=pattern,
+                    category_id=txn.category_id,
+                    confidence=1,
+                )
+                db.add(new_mapping)
+                seen_mappings[pattern] = new_mapping
+
     db.commit()
-    return {"committed": len(staged)}
 ```
+
+The learning mechanism works like this: every time you confirm "STARBUCKS #12345" as "Coffee," the mapping's confidence increments. After 3 confirmations, all future Starbucks transactions are auto-confirmed without human review. If you change the category (say, from "Coffee" to "Work Lunch"), the confidence resets to 1 — you'll need to confirm 3 times again at the new category.
+
+The `seen_mappings` cache prevents a subtle bug: if you commit 10 Starbucks transactions in one batch, without the cache, each would try to INSERT a new mapping (the previous ones aren't committed to the DB yet), hitting the unique constraint. The cache ensures we update the same mapping object for all 10.
+
+### Kick-Back and Revert
+
+Users can undo staging, either for a single transaction or all at once:
+
+```python
+@router.post("/{transaction_id}/kick-back")
+def kick_back_transaction(transaction_id: int, db: Session = Depends(get_db)):
+    """Revert a staged transaction back to pending_review."""
+    txn = db.query(Transaction).get(transaction_id)
+    if txn.category_id and not txn.predicted_category_id:
+        txn.predicted_category_id = txn.category_id
+    txn.category_id = None
+    txn.status = "pending_review"
+    db.commit()
+
+
+@router.post("/staged/revert-all")
+def revert_all_staged(db: Session = Depends(get_db)):
+    """Revert ALL staged transactions back to pending_review."""
+    transactions = db.query(Transaction).filter(
+        Transaction.status == "pending_save"
+    ).all()
+    for txn in transactions:
+        if txn.category_id and not txn.predicted_category_id:
+            txn.predicted_category_id = txn.category_id
+        txn.category_id = None
+        txn.status = "pending_review"
+    db.commit()
+```
+
+Notice the `predicted_category_id` preservation: when kicking back, the previously assigned category is saved as the prediction, so it shows up as the default suggestion when the user reviews it again.
 
 ---
 
-## 4.3 CSV Import (`backend/routers/import_csv.py`)
+## 4.3 Batch Categorization
 
-Before Plaid is connected, historical transactions can be imported from bank CSV downloads. The importer supports multiple bank formats:
+When you import a large CSV or want to re-categorize transactions, the batch endpoint processes them in chunks:
 
 ```python
-@router.post("")
+@router.post("/batch-categorize")
+def batch_categorize(limit: int = Query(default=500, le=5000), db: Session = Depends(get_db)):
+    """Run the categorization cascade on uncategorized transactions."""
+    from ..services.categorize import categorize_transaction
+
+    transactions = (
+        db.query(Transaction)
+        .filter(Transaction.status == "pending_review")
+        .filter(Transaction.predicted_category_id.is_(None))
+        .filter(Transaction.category_id.is_(None))
+        .filter(
+            (Transaction.categorization_tier.is_(None))
+            | (Transaction.categorization_tier != "unmatched")
+        )
+        .order_by(Transaction.date.desc())
+        .limit(limit)
+        .all()
+    )
+
+    stats = {"processed": 0, "auto_staged": 0, "predicted": 0, "unmatched": 0}
+
+    for txn in transactions:
+        result = categorize_transaction(txn.description, txn.amount, db, use_ai=True)
+
+        if result["category_id"]:
+            txn.categorization_tier = result["tier"]
+            txn.prediction_confidence = result.get("confidence", 0)
+
+            if result["status"] == "auto_confirmed":
+                txn.category_id = result["category_id"]
+                txn.status = "pending_save"
+                stats["auto_staged"] += 1
+            else:
+                txn.predicted_category_id = result["category_id"]
+                stats["predicted"] += 1
+        else:
+            txn.categorization_tier = "unmatched"
+            stats["unmatched"] += 1
+
+        # Commit every 50 to avoid long SQLite locks
+        if stats["processed"] % 50 == 0:
+            db.commit()
+
+    db.commit()
+    return stats
+```
+
+Two important details here:
+
+**Unmatched filtering.** Transactions that don't match any tier get tagged with `categorization_tier = "unmatched"`. On the next batch run, these are skipped — the query explicitly excludes them. This prevents the engine from wasting AI API calls on the same unrecognizable transactions every time.
+
+**Periodic commits.** The loop commits every 50 transactions to avoid holding a long SQLite write lock, which would block the UI from reading data.
+
+---
+
+## 4.4 CSV Import (`backend/routers/import_csv.py`)
+
+Before connecting Plaid, you can import historical transactions from bank CSV downloads. The importer handles the tricky part: each bank has a different CSV format with different column names, date formats, and sign conventions.
+
+```python
+PARSERS = {
+    "discover": parse_discover_csv,
+    "sofi_checking": parse_sofi_csv,
+    "sofi_savings": parse_sofi_csv,
+    "wellsfargo": parse_wellsfargo_csv,
+}
+
+@router.post("/csv")
 async def import_csv(
-    file: UploadFile,
-    bank: str,  # "discover", "sofi_checking", "sofi_savings", "wellsfargo"
+    file: UploadFile = File(...),
+    bank: str = Query(..., description="Bank name"),
     db: Session = Depends(get_db),
 ):
-    df = pd.read_csv(file.file)
-
-    # Normalize columns based on bank format
-    if bank == "discover":
-        df = df.rename(columns={
-            "Trans. Date": "date",
-            "Description": "description",
-            "Amount": "amount",
-        })
-        # Discover: positive = expense (debit), negative = payment (credit)
-    elif bank == "sofi_checking":
-        df = df.rename(columns={
-            "Date": "date",
-            "Description": "description",
-            "Amount": "amount",
-        })
-        # SoFi: negative = expense, positive = income
-        df["amount"] = -df["amount"]  # Flip to match Plaid convention
-    # ... similar for other banks
+    """Import a CSV file from a specific bank."""
+    content = await file.read()
+    text = content.decode("utf-8")
 
     # Find the matching account
     account = db.query(Account).filter(
-        Account.institution == bank.split("_")[0]
+        Account.institution == institution_map[bank],
+        Account.account_type == account_type_map[bank],
     ).first()
+
+    # Parse CSV into standardized rows
+    rows = PARSERS[bank](text)
 
     imported = 0
     skipped = 0
-    for _, row in df.iterrows():
-        # Dedup check
+
+    for row in rows:
+        # Dedup: skip if same account + date + description + amount exists
         existing = db.query(Transaction).filter(
             Transaction.account_id == account.id,
             Transaction.date == row["date"],
             Transaction.description == row["description"],
             Transaction.amount == row["amount"],
         ).first()
+
         if existing:
             skipped += 1
             continue
+
+        # Categorize and create
+        cat_result = categorize_transaction(
+            description=row["description"],
+            amount=row["amount"],
+            db=db,
+        )
 
         txn = Transaction(
             account_id=account.id,
             date=row["date"],
             description=row["description"],
-            merchant_name=row["description"],
+            merchant_name=row.get("merchant_name"),
             amount=row["amount"],
+            category_id=cat_result.get("category_id") if cat_result["status"] == "auto_confirmed" else None,
+            predicted_category_id=cat_result.get("category_id"),
+            status=cat_result.get("status", "pending_review"),
             source="csv_import",
-            status="pending_review",
+            categorization_tier=cat_result.get("tier"),
         )
         db.add(txn)
-        db.flush()
-
-        # Auto-categorize
-        categorize_transaction(txn, db)
         imported += 1
 
     db.commit()
-    return {"imported": imported, "skipped": skipped}
+    return {"imported": imported, "skipped_duplicates": skipped}
 ```
 
-The auto-detect endpoint identifies the bank format from CSV headers:
+### Bank-Specific Parsers
+
+Each bank parser lives in `backend/services/csv_parsers/` and normalizes the bank's CSV format into a standard list of dicts with `date`, `description`, `amount`, and optionally `merchant_name`. The key challenge is sign conventions — each bank is different:
+
+**Discover:** Positive amounts are expenses (debits), negative are payments (credits). This already matches our convention.
+
+**SoFi:** Negative amounts are expenses, positive are income. Signs need to be flipped.
+
+**Wells Fargo:** No header row, date is in a different format, and the amount columns are split between debit and credit.
+
+The parsers handle all these differences so the rest of the system works with a uniform format.
+
+### Auto-Detection
+
+The auto-detect endpoint tries to identify the bank from the CSV headers:
 
 ```python
-@router.post("/auto-detect")
-async def auto_detect_bank(file: UploadFile):
+@router.post("/csv/auto-detect")
+async def import_csv_auto(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Auto-detect bank format and import."""
     content = await file.read()
-    header = content.decode().split("\n")[0].lower()
+    text = content.decode("utf-8")
+    first_line = text.split("\n")[0].strip()
 
-    if "trans. date" in header:
-        return {"bank": "discover"}
-    elif "sofi" in header or ("date" in header and "amount" in header):
-        return {"bank": "sofi_checking"}
-    elif "wells fargo" in header:
-        return {"bank": "wellsfargo"}
-    return {"bank": "unknown"}
+    if "Trans. Date" in first_line and "Post Date" in first_line:
+        bank = "discover"
+    elif "Current balance" in first_line and "Status" in first_line:
+        bank = "sofi_checking" if "Roundup" in text[:2000] else "sofi_savings"
+    elif not any(c.isalpha() for c in first_line.split(",")[0]):
+        bank = "wellsfargo"  # No header, starts with date
+    else:
+        raise HTTPException(status_code=400, detail="Could not auto-detect bank format")
 ```
 
 ---
 
-## 4.4 Seed Data (`backend/services/seed_data.py`)
+## 4.5 Soft Delete and Restore
 
-The seed function populates the database with default categories, accounts, amount rules, and high-confidence merchant mappings on first startup. It's idempotent — calling it multiple times has no effect.
-
-### Parent Categories (18)
-
-```python
-PARENT_CATEGORIES = [
-    {"short_desc": "Food", "display_name": "Food", "color": "#FF6B6B"},
-    {"short_desc": "Housing", "display_name": "Housing", "color": "#4ECDC4"},
-    {"short_desc": "Transportation", "display_name": "Transportation", "color": "#45B7D1"},
-    {"short_desc": "Insurance", "display_name": "Insurance", "color": "#96CEB4"},
-    {"short_desc": "Utilities", "display_name": "Utilities", "color": "#FFEAA7"},
-    {"short_desc": "Medical", "display_name": "Medical", "color": "#DDA0DD"},
-    {"short_desc": "Government", "display_name": "Government", "color": "#778899"},
-    {"short_desc": "Savings", "display_name": "Savings", "color": "#98D8C8"},
-    {"short_desc": "Personal_Spending", "display_name": "Personal Spending", "color": "#F7DC6F"},
-    {"short_desc": "Recreation_Entertainment", "display_name": "Recreation & Entertainment", "color": "#BB8FCE"},
-    {"short_desc": "Streaming_Services", "display_name": "Streaming Services", "color": "#E74C3C"},
-    {"short_desc": "Education", "display_name": "Education", "color": "#3498DB"},
-    {"short_desc": "Travel", "display_name": "Travel", "color": "#E67E22"},
-    {"short_desc": "Misc", "display_name": "Miscellaneous", "color": "#95A5A6"},
-    {"short_desc": "People", "display_name": "People", "color": "#1ABC9C"},
-    {"short_desc": "Payment_and_Interest", "display_name": "Payment & Interest", "color": "#7F8C8D"},
-    {"short_desc": "Income", "display_name": "Income", "color": "#2ECC71", "is_income": True},
-    {"short_desc": "Balance", "display_name": "Balance Adjustments", "color": "#BDC3C7"},
-]
-```
-
-### Subcategories (80+)
-
-Each parent has multiple children. For example, "Food" has:
-
-- Groceries, Fast Food, Restaurant, Coffee, Alcohol, Snacks/Convenience
-
-And "Streaming Services" has individual services as subcategories:
-
-- Netflix, Spotify, Hulu, Disney Plus, YouTube Premium, HBO, Apple TV, iCloud, etc.
-
-Each subcategory can have `is_recurring=True` for the recurring monitor.
-
-### Default Accounts (4)
-
-```python
-DEFAULT_ACCOUNTS = [
-    {"name": "Discover Card", "institution": "discover", "account_type": "credit"},
-    {"name": "SoFi Checking", "institution": "sofi", "account_type": "checking"},
-    {"name": "SoFi Savings", "institution": "sofi", "account_type": "savings"},
-    {"name": "Wells Fargo Checking", "institution": "wellsfargo", "account_type": "checking"},
-]
-```
-
-### Initial Merchant Mappings (50+)
-
-High-confidence mappings imported from analysis notebooks:
-
-```python
-SEED_MAPPINGS = [
-    ("safeway", "groceries", 5),
-    ("trader joe", "groceries", 5),
-    ("target", "groceries", 4),
-    ("netflix", "netflix", 5),
-    ("spotify", "spotify", 5),
-    ("shell oil", "gas_station", 5),
-    ("chevron", "gas_station", 5),
-    ("uber", "rideshare", 4),
-    # ... 40+ more
-]
-```
-
-The confidence values start at 4–5 (well above the auto-confirm threshold of 3), so these common merchants are auto-categorized from day one.
-
----
-
-## 4.5 Transaction Analysis Endpoints
-
-The transactions router also provides several analysis endpoints for the frontend charts:
-
-### Spending by Category
-
-```python
-@router.get("/spending-by-category")
-def spending_by_category(month: str, db: Session = Depends(get_db)):
-    """Monthly spending grouped by subcategory, excluding transfers."""
-    # Groups by category, sums amounts, excludes income and balance categories
-```
-
-### Monthly Trend
-
-```python
-@router.get("/monthly-trend")
-def monthly_trend(months: int = 12, db: Session = Depends(get_db)):
-    """Monthly spending totals for the trend line chart."""
-```
-
-### Cash Flow
-
-```python
-@router.get("/cash-flow")
-def cash_flow(year: int, db: Session = Depends(get_db)):
-    """Biweekly cash flow with income and expense breakdowns."""
-```
-
-### Recurring Monitor
-
-```python
-@router.get("/recurring-monitor")
-def recurring_monitor(year: int, db: Session = Depends(get_db)):
-    """Monthly grid of recurring transactions for tracking subscriptions."""
-```
-
-These endpoints are consumed by the corresponding frontend pages covered in Part 5.
-
----
-
-## 4.6 Soft Delete and Restore
-
-Deleting a transaction copies it to the `deleted_transactions` audit log before removing it:
+When you delete a transaction, it's not immediately gone. The deletion is logged to the `deleted_transactions` audit table so it can be undone:
 
 ```python
 @router.delete("/{transaction_id}")
 def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
     txn = db.query(Transaction).get(transaction_id)
-    if not txn:
-        raise HTTPException(status_code=404)
 
-    # Archive to deleted_transactions
-    db.add(DeletedTransaction(
+    # Copy to audit log
+    log_entry = DeletedTransaction(
         original_id=txn.id,
         account_id=txn.account_id,
         account_name=txn.account.name if txn.account else None,
@@ -517,21 +604,174 @@ def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
         description=txn.description,
         merchant_name=txn.merchant_name,
         amount=txn.amount,
-        category_name=txn.category.short_desc if txn.category else None,
+        category_name=txn.category.display_name if txn.category else None,
         status=txn.status,
         source=txn.source,
-    ))
+    )
+    db.add(log_entry)
     db.delete(txn)
     db.commit()
-    return {"status": "deleted"}
 ```
 
-The deleted transactions page can restore entries back to the main table or permanently purge them.
+Restoration recreates the transaction from the audit log. Since the audit log stores names (not foreign key IDs), restoration uses a best-effort category lookup:
+
+```python
+@router.post("/restore/{deleted_id}")
+def restore_transaction(deleted_id: int, db: Session = Depends(get_db)):
+    entry = db.query(DeletedTransaction).get(deleted_id)
+
+    # Best-effort category resolution from stored name
+    category_id = None
+    if entry.category_name:
+        cat = db.query(Category).filter(Category.display_name == entry.category_name).first()
+        if cat:
+            category_id = cat.id
+
+    txn = Transaction(
+        account_id=entry.account_id,
+        date=entry.date,
+        description=entry.description,
+        merchant_name=entry.merchant_name,
+        amount=entry.amount,
+        category_id=category_id,
+        status="confirmed",
+        source=entry.source,
+    )
+    db.add(txn)
+    db.delete(entry)
+    db.commit()
+```
+
+Bulk delete and bulk restore endpoints work the same way, processing lists of IDs.
+
+---
+
+## 4.6 Analytics Endpoints
+
+The transactions router also provides the data behind the frontend charts. These endpoints all share a pattern: they query confirmed transactions, exclude internal transfers, and aggregate by time or category.
+
+### Transfer Exclusion
+
+Internal transfers (moving money between your own accounts) and credit card payments create double-counting in spending reports. A $500 credit card payment looks like a $500 expense on the checking account, even though you already counted the individual purchases on the credit card. The app excludes these:
+
+```python
+EXCLUDED_CATEGORIES = {
+    "transfer", "credit_card_payment", "payment",
+    "discover", "roundups",
+}
+
+def _exclude_transfers(query, db):
+    """Exclude transfer/payment categories AND their children."""
+    excluded_parents = db.query(Category.id).filter(
+        Category.short_desc.in_(EXCLUDED_CATEGORIES)
+    ).all()
+    excluded_ids = {row[0] for row in excluded_parents}
+
+    # Also exclude child categories of excluded parents
+    child_ids = db.query(Category.id).filter(
+        Category.parent_id.in_(excluded_ids)
+    ).all()
+    excluded_ids.update(row[0] for row in child_ids)
+
+    return query.filter(~Transaction.category_id.in_(excluded_ids))
+```
+
+### Spending by Category
+
+Returns spending totals grouped by subcategory for pie charts, with parent category information for color-coding:
+
+```python
+@router.get("/spending-by-category")
+def spending_by_category(month: Optional[str] = None, db: Session = Depends(get_db)):
+    """Monthly spending by subcategory, with parent info."""
+    # Joins Category → Transaction, groups by Category.id
+    # Filters: confirmed/auto_confirmed, amount > 0 (expenses only), excludes transfers
+    # Returns: [{id, short_desc, display_name, color, parent_display_name, total, count}]
+```
+
+### Monthly Trend
+
+Returns monthly spending totals for the trend line chart:
+
+```python
+@router.get("/monthly-trend")
+def monthly_trend(months: int = 6, db: Session = Depends(get_db)):
+    """Monthly spending totals, most recent months first."""
+    # Uses strftime("%Y-%m") to group by month
+    # Returns: [{month: "2025-01", total: 4523.12, count: 142}]
+```
+
+### Cash Flow
+
+The most complex analytics endpoint. Returns biweekly income vs. expense data with cumulative running totals and a full category breakdown:
+
+```python
+@router.get("/cash-flow")
+def cash_flow(year: int = None, db: Session = Depends(get_db)):
+    """Biweekly cash flow with income/expense breakdown and category detail."""
+    # Builds 2-week period buckets for the year
+    # Groups transactions by period: income (amount < 0) vs expenses (amount > 0)
+    # Builds parent → children hierarchy with per-period totals
+    # Returns: {
+    #   summary: {total_income, total_expenses, net},
+    #   weeks: [{week_start, week_end, income, expenses, net, cumulative}],
+    #   categories: [{name, color, total, weekly_totals, children: [...]}],
+    #   excluded_categories: [{name, total, count}]
+    # }
+```
+
+The excluded categories list is included in the response so the frontend can show the user what's being filtered out — transparency about why their numbers might not match the raw transaction list.
+
+### Recurring Monitor
+
+Shows a year-long grid of recurring expenses (subscriptions, rent, utilities) by month:
+
+```python
+@router.get("/recurring-monitor")
+def recurring_monitor(year: int = None, db: Session = Depends(get_db)):
+    """Monthly grid of recurring subcategories for the year."""
+    # Only includes categories where is_recurring = True
+    # Returns one row per category with 12-element monthly array
+    # Returns: {
+    #   year, active_months,
+    #   rows: [{category_id, display_name, parent_name, monthly: [null, 45.00, 45.00, ...]}],
+    #   totals: [monthly sum, ...]
+    # }
+```
+
+The `active_months` field tells the frontend which months have any data, so it can visually distinguish "no subscription that month" from "no data imported yet."
+
+### Available Years
+
+Returns which years have transaction data, used by the year selector in the UI:
+
+```python
+@router.get("/years")
+def get_available_years(db: Session = Depends(get_db)):
+    """Years with data and their pending counts."""
+    # Returns: [{year: 2024, total: 1234, pending: 56}]
+```
+
+---
+
+## 4.7 Maintenance Endpoints
+
+The transactions router includes several maintenance endpoints for data cleanup:
+
+**`POST /deduplicate`** — Finds and removes duplicate transactions (same account + date + amount + description). Keeps the one with the best status (confirmed > pending_save > auto_confirmed > pending_review). Has a `dry_run` mode that previews changes without applying them.
+
+**`POST /fix-archive-signs`** — Fixes sign convention for archive-imported bank transactions. Some bank exports use positive=deposit while the app uses positive=expense. This flips the signs on affected transactions.
+
+**`POST /fix-archive-descriptions`** — Fixes merchant names that were incorrectly set to category labels instead of actual transaction descriptions during archive import.
+
+**`POST /clear-predictions`** — Resets all AI predictions on pending transactions, useful for re-running categorization from scratch after updating merchant mappings or amount rules.
+
+These endpoints all support `dry_run=true` (the default), which shows what would change without actually changing anything. This is important for data integrity — you can preview the impact before committing.
 
 ---
 
 ## What's Next
 
-With the backend fully operational — syncing, categorizing, and storing transactions — Part 5 builds the entire React frontend: 13+ pages, routing, charts, and styles.
+With the backend fully operational — syncing, categorizing, and storing transactions — Part 5 builds the entire React frontend: the layout system, routing, all the pages (Spending, Budgets, Accounts, Review Queue, Cash Flow, Recurring Monitor, and more), and the CSS styling.
 
 → [Part 5: Frontend & React UI](05-frontend-react.md)

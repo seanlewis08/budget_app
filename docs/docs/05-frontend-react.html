@@ -66,17 +66,87 @@
     <main class="docs-content">
       <div class="md-content">
 <h1 id="part-5-frontend-react-ui">Part 5 — Frontend &amp; React UI</h1>
-<p>This part covers the entire React frontend: the app shell, routing, all 13+ pages, shared components, and CSS styling. The frontend uses React 18, React Router 6, Recharts for data visualization, and Lucide React for icons.</p>
+<p>The backend handles data and logic. Now we build what users actually see and interact with — the React frontend. This part covers the complete UI: the app shell with sidebar navigation, all thirteen pages, shared components, the design system, and how everything connects to the API endpoints we built in Parts 2–4.</p>
+<p>The frontend uses React 18 with Vite, React Router 6 for navigation, Recharts for charts, Lucide React for icons, and <code>react-plaid-link</code> for the bank connection widget. There are no CSS frameworks — the entire design system is a single handwritten CSS file with CSS custom properties (variables) for theming.</p>
 <hr>
-<h2 id="51-app-shell-and-routing-appjsx">5.1 App Shell and Routing (<code>App.jsx</code>)</h2>
-<p>The app has a fixed sidebar navigation and a main content area. The top-level <code>App</code> component wraps everything in a <code>BrowserRouter</code>:</p>
-<pre><code class="language-jsx">import React, { useState, useEffect, useCallback } from 'react'
-import { BrowserRouter, Routes, Route, NavLink, useNavigate } from 'react-router-dom'
-import { usePlaidLink } from 'react-plaid-link'
-import {
-  LayoutDashboard, CheckSquare, TrendingUp, Wallet, Settings,
-  FolderTree, Database, BarChart3, Repeat, LineChart, Sparkles
-} from 'lucide-react'
+<h2 id="51-design-system-stylescss">5.1 Design System (<code>styles.css</code>)</h2>
+<p>Before building any components, let's establish the visual foundation. The entire app uses a dark theme defined through CSS custom properties on <code>:root</code>:</p>
+<pre><code class="language-css">:root {
+  --bg-primary: #0f1117;
+  --bg-secondary: #1a1d27;
+  --bg-card: #222633;
+  --bg-hover: #2a2e3d;
+  --text-primary: #e8eaed;
+  --text-secondary: #9aa0a6;
+  --text-muted: #6b7280;
+  --accent: #60a5fa;
+  --accent-hover: #3b82f6;
+  --green: #34d399;
+  --green-bg: rgba(52, 211, 153, 0.1);
+  --yellow: #fbbf24;
+  --yellow-bg: rgba(251, 191, 36, 0.1);
+  --red: #f87171;
+  --red-bg: rgba(248, 113, 113, 0.1);
+  --border: #2d3244;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+</code></pre>
+<p>Every color in the app references these variables. This means you could switch to a light theme by changing just these twenty values. The semantic naming is deliberate: <code>--green</code> means "positive/success," <code>--red</code> means "negative/warning," and <code>--yellow</code> means "needs attention." Each semantic color has a corresponding <code>-bg</code> variant at 10% opacity, used for tinted background badges and alerts.</p>
+<p>The layout is a two-column design: a fixed 240px sidebar on the left, and the main content area fills the remaining space with padding:</p>
+<pre><code class="language-css">.app {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 240px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+}
+
+.main-content {
+  margin-left: 240px;
+  padding: 24px 32px;
+  flex: 1;
+  min-height: 100vh;
+}
+</code></pre>
+<p>The sidebar is <code>position: fixed</code> so it stays in place as the main content scrolls. Cards — the primary container for content — use the <code>--bg-card</code> background with a subtle border:</p>
+<pre><code class="language-css">.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+</code></pre>
+<p>Buttons come in three variants — primary (blue accent), secondary (subtle), and danger (red). All share the same base styles but differ in background and text color. The <code>.btn</code> class handles padding, border-radius, font size, and hover transitions.</p>
+<p>The stats row — used on Spending, Budget, Cash Flow, and Data pages — is a horizontal row of stat cards using flexbox. Each stat card shows a label and a large value:</p>
+<pre><code class="language-css">.stats-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.stat-card {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+}
+</code></pre>
+<p>Every page follows the same structure: a <code>.page-header</code> with title and subtitle, optional stat cards, then one or more <code>.card</code> containers with content. This consistency makes the app feel polished without needing a component library.</p>
+<hr>
+<h2 id="52-app-shell-and-routing-appjsx">5.2 App Shell and Routing (<code>App.jsx</code>)</h2>
+<p>The top-level <code>App</code> component defines the layout structure and all routes. It wraps everything in a <code>BrowserRouter</code> from React Router:</p>
+<pre><code class="language-jsx">import { BrowserRouter, Routes, Route, NavLink, useNavigate } from 'react-router-dom'
 
 // Page imports
 import ReviewQueue from './pages/ReviewQueue'
@@ -94,7 +164,7 @@ import DeletedTransactions from './pages/DeletedTransactions'
 import SyncHistory from './pages/SyncHistory'
 </code></pre>
 <h3 id="sidebar">Sidebar</h3>
-<p>The sidebar uses <code>NavLink</code> for active-state highlighting and shows a badge with the count of pending + staged transactions:</p>
+<p>The sidebar component uses <code>NavLink</code> — React Router's version of an anchor tag that automatically adds an <code>active</code> class when the current URL matches:</p>
 <pre><code class="language-jsx">function Sidebar({ pendingCount }) {
   return (
     &lt;nav className=&quot;sidebar&quot;&gt;
@@ -106,332 +176,821 @@ import SyncHistory from './pages/SyncHistory'
         &lt;li&gt;
           &lt;NavLink to=&quot;/&quot; end&gt;
             &lt;CheckSquare size={18} /&gt;
-            Review Queue
+            &lt;span&gt;Review Queue&lt;/span&gt;
             {pendingCount &gt; 0 &amp;&amp; (
               &lt;span className=&quot;badge&quot;&gt;{pendingCount}&lt;/span&gt;
             )}
           &lt;/NavLink&gt;
         &lt;/li&gt;
-        &lt;li&gt;&lt;NavLink to=&quot;/spending&quot;&gt;&lt;TrendingUp size={18} /&gt;Spending&lt;/NavLink&gt;&lt;/li&gt;
-        &lt;li&gt;&lt;NavLink to=&quot;/cash-flow&quot;&gt;&lt;BarChart3 size={18} /&gt;Cash Flow&lt;/NavLink&gt;&lt;/li&gt;
-        &lt;li&gt;&lt;NavLink to=&quot;/recurring&quot;&gt;&lt;Repeat size={18} /&gt;Recurring&lt;/NavLink&gt;&lt;/li&gt;
-        &lt;li&gt;&lt;NavLink to=&quot;/budget&quot;&gt;&lt;Wallet size={18} /&gt;Budget&lt;/NavLink&gt;&lt;/li&gt;
-        &lt;li&gt;&lt;NavLink to=&quot;/accounts&quot;&gt;&lt;LayoutDashboard size={18} /&gt;Accounts&lt;/NavLink&gt;&lt;/li&gt;
-        &lt;li&gt;&lt;NavLink to=&quot;/investments&quot;&gt;&lt;LineChart size={18} /&gt;Investments&lt;/NavLink&gt;&lt;/li&gt;
-        &lt;li&gt;&lt;NavLink to=&quot;/insights&quot;&gt;&lt;Sparkles size={18} /&gt;Insights&lt;/NavLink&gt;&lt;/li&gt;
-        &lt;li&gt;&lt;NavLink to=&quot;/data&quot;&gt;&lt;Database size={18} /&gt;Data&lt;/NavLink&gt;&lt;/li&gt;
-        &lt;li&gt;&lt;NavLink to=&quot;/categories&quot;&gt;&lt;FolderTree size={18} /&gt;Categories&lt;/NavLink&gt;&lt;/li&gt;
-        &lt;li&gt;&lt;NavLink to=&quot;/settings&quot;&gt;&lt;Settings size={18} /&gt;Settings&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/spending&quot;&gt;&lt;TrendingUp size={18} /&gt;&lt;span&gt;Spending&lt;/span&gt;&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/budget&quot;&gt;&lt;Wallet size={18} /&gt;&lt;span&gt;Budget&lt;/span&gt;&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/cash-flow&quot;&gt;&lt;BarChart3 size={18} /&gt;&lt;span&gt;Cash Flow&lt;/span&gt;&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/recurring&quot;&gt;&lt;Repeat size={18} /&gt;&lt;span&gt;Recurring&lt;/span&gt;&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/investments&quot;&gt;&lt;LineChart size={18} /&gt;&lt;span&gt;Investments&lt;/span&gt;&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/insights&quot;&gt;&lt;Sparkles size={18} /&gt;&lt;span&gt;Insights&lt;/span&gt;&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/accounts&quot;&gt;&lt;Database size={18} /&gt;&lt;span&gt;Accounts&lt;/span&gt;&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/data&quot;&gt;&lt;FolderTree size={18} /&gt;&lt;span&gt;Data&lt;/span&gt;&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/categories&quot;&gt;&lt;FolderTree size={18} /&gt;&lt;span&gt;Categories&lt;/span&gt;&lt;/NavLink&gt;&lt;/li&gt;
+        &lt;li&gt;&lt;NavLink to=&quot;/settings&quot;&gt;&lt;Settings size={18} /&gt;&lt;span&gt;Settings&lt;/span&gt;&lt;/NavLink&gt;&lt;/li&gt;
       &lt;/ul&gt;
+      &lt;div className=&quot;sidebar-footer&quot;&gt;v0.1.7&lt;/div&gt;
     &lt;/nav&gt;
   )
 }
 </code></pre>
-<h3 id="stats-polling">Stats Polling</h3>
-<p>The <code>AppContent</code> component polls <code>/api/stats</code> every 30 seconds to keep the sidebar badge up to date:</p>
-<pre><code class="language-jsx">function AppContent() {
-  const [stats, setStats] = useState({
-    total_transactions: 0,
-    pending_review: 0,
-    pending_save: 0,
-    confirmed: 0,
-  })
+<p>The Review Queue link shows a badge with the count of transactions needing attention (<code>pending_review</code> + <code>pending_save</code> statuses). This count is fetched by the parent <code>App</code> component and passed down.</p>
+<h3 id="route-definitions">Route Definitions</h3>
+<p>The main <code>App</code> component renders the sidebar and a route switch:</p>
+<pre><code class="language-jsx">export default function App() {
+  const [pendingCount, setPendingCount] = useState(0)
 
-  const fetchStats = async () =&gt; {
+  const fetchPendingCount = useCallback(async () =&gt; {
     try {
-      const res = await fetch('/api/stats')
-      if (res.ok) setStats(await res.json())
-    } catch (err) {
-      console.error('Failed to fetch stats:', err)
-    }
-  }
-
-  useEffect(() =&gt; {
-    fetchStats()
-    const interval = setInterval(fetchStats, 30000)
-    return () =&gt; clearInterval(interval)
+      const res = await fetch('/api/transactions/pending-count')
+      if (res.ok) {
+        const data = await res.json()
+        setPendingCount(data.count)
+      }
+    } catch (err) { /* ignore */ }
   }, [])
 
+  useEffect(() =&gt; {
+    fetchPendingCount()
+  }, [fetchPendingCount])
+
   return (
-    &lt;div className=&quot;app&quot;&gt;
-      &lt;Sidebar pendingCount={stats.pending_review + (stats.pending_save || 0)} /&gt;
-      &lt;main className=&quot;main-content&quot;&gt;
-        &lt;Routes&gt;
-          &lt;Route path=&quot;/&quot; element={&lt;ReviewQueue stats={stats} onUpdate={fetchStats} /&gt;} /&gt;
-          &lt;Route path=&quot;/spending&quot; element={&lt;Spending /&gt;} /&gt;
-          &lt;Route path=&quot;/cash-flow&quot; element={&lt;CashFlow /&gt;} /&gt;
-          &lt;Route path=&quot;/recurring&quot; element={&lt;RecurringMonitor /&gt;} /&gt;
-          &lt;Route path=&quot;/budget&quot; element={&lt;Budget /&gt;} /&gt;
-          &lt;Route path=&quot;/accounts&quot; element={&lt;Accounts onUpdate={fetchStats} /&gt;} /&gt;
-          &lt;Route path=&quot;/investments&quot; element={&lt;Investments /&gt;} /&gt;
-          &lt;Route path=&quot;/insights&quot; element={&lt;Insights /&gt;} /&gt;
-          &lt;Route path=&quot;/data&quot; element={&lt;Data /&gt;} /&gt;
-          &lt;Route path=&quot;/categories&quot; element={&lt;Categories /&gt;} /&gt;
-          &lt;Route path=&quot;/oauth-callback&quot; element={&lt;OAuthCallback /&gt;} /&gt;
-          &lt;Route path=&quot;/settings&quot; element={&lt;SettingsPage /&gt;} /&gt;
-          &lt;Route path=&quot;/deleted-transactions&quot; element={&lt;DeletedTransactions /&gt;} /&gt;
-          &lt;Route path=&quot;/sync-history&quot; element={&lt;SyncHistory /&gt;} /&gt;
-        &lt;/Routes&gt;
-      &lt;/main&gt;
+    &lt;BrowserRouter&gt;
+      &lt;div className=&quot;app&quot;&gt;
+        &lt;Sidebar pendingCount={pendingCount} /&gt;
+        &lt;main className=&quot;main-content&quot;&gt;
+          &lt;Routes&gt;
+            &lt;Route path=&quot;/&quot; element={&lt;ReviewQueue onUpdate={fetchPendingCount} /&gt;} /&gt;
+            &lt;Route path=&quot;/spending&quot; element={&lt;Spending /&gt;} /&gt;
+            &lt;Route path=&quot;/budget&quot; element={&lt;Budget /&gt;} /&gt;
+            &lt;Route path=&quot;/cash-flow&quot; element={&lt;CashFlow /&gt;} /&gt;
+            &lt;Route path=&quot;/recurring&quot; element={&lt;RecurringMonitor /&gt;} /&gt;
+            &lt;Route path=&quot;/investments&quot; element={&lt;Investments /&gt;} /&gt;
+            &lt;Route path=&quot;/insights&quot; element={&lt;Insights /&gt;} /&gt;
+            &lt;Route path=&quot;/accounts&quot; element={&lt;Accounts onUpdate={fetchPendingCount} /&gt;} /&gt;
+            &lt;Route path=&quot;/data&quot; element={&lt;Data /&gt;} /&gt;
+            &lt;Route path=&quot;/categories&quot; element={&lt;Categories /&gt;} /&gt;
+            &lt;Route path=&quot;/settings&quot; element={&lt;SettingsPage /&gt;} /&gt;
+            &lt;Route path=&quot;/deleted-transactions&quot; element={&lt;DeletedTransactions /&gt;} /&gt;
+            &lt;Route path=&quot;/sync-history&quot; element={&lt;SyncHistory /&gt;} /&gt;
+            &lt;Route path=&quot;/oauth-callback&quot; element={&lt;OAuthCallback /&gt;} /&gt;
+          &lt;/Routes&gt;
+        &lt;/main&gt;
+      &lt;/div&gt;
+    &lt;/BrowserRouter&gt;
+  )
+}
+</code></pre>
+<p>The <code>onUpdate</code> callback is passed to pages that can change the pending count — the Review Queue (when you confirm transactions) and Accounts (when a sync or CSV import brings in new transactions). When those pages finish an action, they call <code>onUpdate()</code> which re-fetches the count and updates the badge.</p>
+<h3 id="the-oauth-callback-route">The OAuth Callback Route</h3>
+<p>Plaid's OAuth flow redirects the browser to a callback URL after the user authenticates with their bank. The <code>OAuthCallback</code> component handles this by restoring the Plaid Link session from <code>sessionStorage</code> and completing the exchange:</p>
+<pre><code class="language-jsx">function OAuthCallback() {
+  const navigate = useNavigate()
+
+  useEffect(() =&gt; {
+    const linkToken = sessionStorage.getItem('plaid_link_token')
+    if (!linkToken) {
+      navigate('/accounts')
+    }
+    // PlaidLink will reopen automatically with the receivedRedirectUri
+  }, [navigate])
+
+  const linkToken = sessionStorage.getItem('plaid_link_token')
+  if (!linkToken) return null
+
+  return (
+    &lt;PlaidLinkOpener
+      token={linkToken}
+      receivedRedirectUri={window.location.href}
+      onSuccess={handleExchange}
+      onExit={() =&gt; navigate('/accounts')}
+    /&gt;
+  )
+}
+</code></pre>
+<p>This is only needed when running in Plaid's development or production environments where OAuth is required. In sandbox mode, the bank login happens in a modal and doesn't redirect.</p>
+<hr>
+<h2 id="53-review-queue-reviewqueuejsx">5.3 Review Queue (<code>ReviewQueue.jsx</code>)</h2>
+<p>The Review Queue is the most important page in the app — it's where you categorize transactions. Every transaction that the categorization engine couldn't auto-confirm ends up here, waiting for human review.</p>
+<h3 id="fetching-transactions">Fetching Transactions</h3>
+<p>The page calls <code>GET /api/transactions/review-queue</code> which returns transactions with status <code>pending_review</code> or <code>pending_save</code>:</p>
+<pre><code class="language-jsx">const fetchTransactions = async () =&gt; {
+  const res = await fetch('/api/transactions/review-queue')
+  if (res.ok) {
+    const data = await res.json()
+    // Separate into staged (pending_save) and pending (pending_review)
+    setStaged(data.filter(t =&gt; t.status === 'pending_save'))
+    setPending(data.filter(t =&gt; t.status === 'pending_review'))
+  }
+}
+</code></pre>
+<p>Transactions are split into two groups displayed separately:</p>
+<p><strong>Staged</strong> (yellow section at top): Transactions that have been assigned a category but not yet saved to the database. These are in the <code>pending_save</code> state. The user can review them and either commit all at once or kick individual ones back to pending.</p>
+<p><strong>Pending</strong> (main list below): Transactions waiting for initial categorization. Each one shows the AI's prediction (if available) with a question mark, and the user can accept the prediction or pick a different category.</p>
+<h3 id="the-categorization-flow">The Categorization Flow</h3>
+<p>Each transaction row shows the description, amount, account, and a category badge. Clicking the badge opens a <code>CategoryPicker</code> dropdown. When the user selects a category, this happens:</p>
+<pre><code class="language-jsx">const handleAccept = async (txnId, shortDesc) =&gt; {
+  const res = await fetch(`/api/transactions/${txnId}/review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ category_short_desc: shortDesc }),
+  })
+  if (res.ok) {
+    // Move from pending to staged
+    fetchTransactions()
+  }
+}
+</code></pre>
+<p>The <code>POST /api/transactions/{id}/review</code> endpoint (from Part 4) updates the transaction's category and sets its status to <code>pending_save</code>. The transaction visually moves from the pending list to the staged section at the top.</p>
+<h3 id="batch-commit">Batch Commit</h3>
+<p>The staged section has a "Save All" button that commits everything at once:</p>
+<pre><code class="language-jsx">const handleCommitAll = async () =&gt; {
+  const res = await fetch('/api/transactions/commit-staged', {
+    method: 'POST',
+  })
+  if (res.ok) {
+    fetchTransactions()
+    onUpdate()  // Refresh the sidebar badge count
+  }
+}
+</code></pre>
+<p>This calls the <code>POST /api/transactions/commit-staged</code> endpoint which flips all <code>pending_save</code> transactions to <code>confirmed</code>, creates merchant mappings for future auto-categorization, and returns a count of how many were committed.</p>
+<h3 id="batch-categorization">Batch Categorization</h3>
+<p>For bulk operations, the page has a "Batch Categorize" button that sends all pending transactions to Claude AI:</p>
+<pre><code class="language-jsx">const handleBatchCategorize = async () =&gt; {
+  setCategorizing(true)
+  const res = await fetch('/api/transactions/batch-categorize', {
+    method: 'POST',
+  })
+  if (res.ok) {
+    const data = await res.json()
+    // data.categorized, data.already_done, data.failed
+    fetchTransactions()
+  }
+  setCategorizing(false)
+}
+</code></pre>
+<p>This sends uncategorized transactions to the 3-tier engine. Transactions that get auto-confirmed skip the queue entirely. The rest appear in the staged section with AI predictions for review.</p>
+<hr>
+<h2 id="54-the-categorypicker-component-componentscategorypickerjsx">5.4 The CategoryPicker Component (<code>components/CategoryPicker.jsx</code>)</h2>
+<p>The <code>CategoryPicker</code> is a shared dropdown used everywhere categories need to be selected — the Review Queue, the Data page, and bulk operations. It's worth examining separately because it's the most complex UI component in the app.</p>
+<h3 id="structure">Structure</h3>
+<p>It renders as a floating dropdown (absolutely positioned) that shows the full category tree — parent categories with expandable child categories:</p>
+<pre><code class="language-jsx">export default function CategoryPicker({ categoryTree, onSelect, onCancel, onTreeChanged }) {
+  const [search, setSearch] = useState('')
+  const [expanded, setExpanded] = useState(new Set())
+  const ref = useRef(null)
+
+  // Close on outside click
+  useEffect(() =&gt; {
+    const handler = (e) =&gt; {
+      if (ref.current &amp;&amp; !ref.current.contains(e.target)) onCancel()
+    }
+    document.addEventListener('mousedown', handler)
+    return () =&gt; document.removeEventListener('mousedown', handler)
+  }, [onCancel])
+</code></pre>
+<h3 id="search-filtering">Search Filtering</h3>
+<p>A search box at the top filters categories in real-time. The filtering is case-insensitive and matches against both parent and child display names. When searching, all matching parents auto-expand to show their matching children:</p>
+<pre><code class="language-jsx">const q = search.toLowerCase()
+const filtered = q
+  ? categoryTree.map(parent =&gt; ({
+      ...parent,
+      children: parent.children.filter(child =&gt;
+        child.display_name.toLowerCase().includes(q)
+      ),
+      parentMatch: parent.display_name.toLowerCase().includes(q),
+    })).filter(pg =&gt; pg.parentMatch || pg.children.length &gt; 0)
+  : categoryTree
+</code></pre>
+<h3 id="inline-category-creation">Inline Category Creation</h3>
+<p>At the bottom of the dropdown is a "Create new subcategory" section. The user types a name, selects a parent, and clicks create. This calls <code>POST /api/categories/</code> to create the category, then triggers <code>onTreeChanged</code> so the dropdown refreshes with the new option. This means you never have to leave the categorization flow to create a missing category.</p>
+<h3 id="how-its-used">How it's Used</h3>
+<p>Every place that needs category selection renders the same component:</p>
+<pre><code class="language-jsx">// In ReviewQueue — single transaction
+&lt;CategoryPicker
+  categoryTree={categoryTree}
+  onSelect={(shortDesc) =&gt; handleAccept(txn.id, shortDesc)}
+  onCancel={() =&gt; setEditingId(null)}
+  onTreeChanged={fetchCategories}
+/&gt;
+
+// In Data page — bulk operation
+&lt;CategoryPicker
+  categoryTree={categoryTree}
+  onSelect={bulkAssignCategory}
+  onCancel={() =&gt; setBulkPickerOpen(false)}
+  onTreeChanged={fetchCategories}
+/&gt;
+</code></pre>
+<p>The <code>onSelect</code> callback receives the <code>short_desc</code> string of the chosen category, which is what the API expects for category assignment.</p>
+<hr>
+<h2 id="55-spending-page-spendingjsx">5.5 Spending Page (<code>Spending.jsx</code>)</h2>
+<p>The Spending page is the primary analytics dashboard. It shows where your money goes, broken down by category, with charts and a detailed table.</p>
+<h3 id="data-fetching">Data Fetching</h3>
+<p>The page fetches spending data from the analytics endpoint we built in Part 4:</p>
+<pre><code class="language-jsx">const fetchSpending = async () =&gt; {
+  const params = new URLSearchParams()
+  if (selectedMonth) {
+    params.set('start_date', `${selectedMonth}-01`)
+    // Calculate end of month
+    const [year, month] = selectedMonth.split('-').map(Number)
+    const lastDay = new Date(year, month, 0).getDate()
+    params.set('end_date', `${selectedMonth}-${lastDay}`)
+  }
+  if (selectedAccountId) params.set('account_id', selectedAccountId)
+
+  const res = await fetch(`/api/transactions/spending-by-category?${params}`)
+  if (res.ok) {
+    const data = await res.json()
+    setSpendingData(data)
+  }
+}
+</code></pre>
+<p>The <code>GET /api/transactions/spending-by-category</code> endpoint returns spending grouped by parent category, with subcategory breakdowns and totals.</p>
+<h3 id="charts">Charts</h3>
+<p>The page uses Recharts to render two visualizations:</p>
+<p><strong>Pie Chart</strong> — Shows the proportion of spending per category. Each slice uses the category's color from the database:</p>
+<pre><code class="language-jsx">&lt;PieChart&gt;
+  &lt;Pie
+    data={chartData}
+    dataKey=&quot;total&quot;
+    nameKey=&quot;category&quot;
+    innerRadius={60}
+    outerRadius={100}
+  &gt;
+    {chartData.map((entry, i) =&gt; (
+      &lt;Cell key={i} fill={entry.color} /&gt;
+    ))}
+  &lt;/Pie&gt;
+  &lt;Tooltip formatter={(val) =&gt; formatCurrency(val)} /&gt;
+&lt;/PieChart&gt;
+</code></pre>
+<p><strong>Bar Chart</strong> — Shows monthly spending trends using <code>GET /api/transactions/monthly-trend</code>:</p>
+<pre><code class="language-jsx">&lt;BarChart data={trendData}&gt;
+  &lt;CartesianGrid strokeDasharray=&quot;3 3&quot; stroke=&quot;var(--border)&quot; /&gt;
+  &lt;XAxis dataKey=&quot;month&quot; stroke=&quot;var(--text-muted)&quot; /&gt;
+  &lt;YAxis stroke=&quot;var(--text-muted)&quot; tickFormatter={val =&gt; `$${val}`} /&gt;
+  &lt;Tooltip /&gt;
+  &lt;Bar dataKey=&quot;total&quot; fill=&quot;var(--accent)&quot; radius={[4, 4, 0, 0]} /&gt;
+&lt;/BarChart&gt;
+</code></pre>
+<h3 id="expandable-category-rows">Expandable Category Rows</h3>
+<p>Below the charts is a table of spending by category. Each parent category row is expandable — clicking it reveals the subcategory breakdown:</p>
+<pre><code class="language-jsx">{spendingData.map(cat =&gt; (
+  &lt;div key={cat.category}&gt;
+    &lt;div className=&quot;spending-row&quot; onClick={() =&gt; toggleExpand(cat.category)}&gt;
+      &lt;span className=&quot;color-dot&quot; style={{ background: cat.color }} /&gt;
+      &lt;span className=&quot;name&quot;&gt;{cat.category}&lt;/span&gt;
+      &lt;span className=&quot;amount&quot;&gt;{formatCurrency(cat.total)}&lt;/span&gt;
+      &lt;ChevronRight className={expanded.has(cat.category) ? 'rotated' : ''} /&gt;
+    &lt;/div&gt;
+    {expanded.has(cat.category) &amp;&amp; cat.subcategories.map(sub =&gt; (
+      &lt;div key={sub.name} className=&quot;spending-sub-row&quot;&gt;
+        &lt;span className=&quot;name&quot;&gt;{sub.name}&lt;/span&gt;
+        &lt;span className=&quot;amount&quot;&gt;{formatCurrency(sub.total)}&lt;/span&gt;
+      &lt;/div&gt;
+    ))}
+  &lt;/div&gt;
+))}
+</code></pre>
+<p>The color dot next to each category name uses the <code>color</code> field from the Category model, giving visual consistency between the pie chart and the table.</p>
+<hr>
+<h2 id="56-cash-flow-page-cashflowjsx">5.6 Cash Flow Page (<code>CashFlow.jsx</code>)</h2>
+<p>The Cash Flow page shows income vs. expenses over time using a line chart. It fetches data from <code>GET /api/transactions/cash-flow</code>:</p>
+<pre><code class="language-jsx">const fetchCashFlow = async () =&gt; {
+  const params = new URLSearchParams()
+  if (selectedYear) {
+    params.set('start_date', `${selectedYear}-01-01`)
+    params.set('end_date', `${selectedYear}-12-31`)
+  }
+  const res = await fetch(`/api/transactions/cash-flow?${params}`)
+  if (res.ok) setCashFlowData(await res.json())
+}
+</code></pre>
+<p>The API returns monthly totals with <code>income</code>, <code>expenses</code>, and <code>net</code> for each month. The chart renders two lines (income in green, expenses in red) with the net shown in stat cards above:</p>
+<pre><code class="language-jsx">&lt;LineChart data={cashFlowData}&gt;
+  &lt;Line type=&quot;monotone&quot; dataKey=&quot;income&quot; stroke=&quot;var(--green)&quot; strokeWidth={2} /&gt;
+  &lt;Line type=&quot;monotone&quot; dataKey=&quot;expenses&quot; stroke=&quot;var(--red)&quot; strokeWidth={2} /&gt;
+  &lt;CartesianGrid strokeDasharray=&quot;3 3&quot; stroke=&quot;var(--border)&quot; /&gt;
+  &lt;XAxis dataKey=&quot;month&quot; /&gt;
+  &lt;YAxis tickFormatter={val =&gt; `$${Math.abs(val)}`} /&gt;
+  &lt;Tooltip /&gt;
+&lt;/LineChart&gt;
+</code></pre>
+<p>The stat cards at the top show total income, total expenses, and net savings for the selected period.</p>
+<hr>
+<h2 id="57-budget-page-budgetjsx">5.7 Budget Page (<code>Budget.jsx</code>)</h2>
+<p>The Budget page lets users set monthly spending targets and tracks progress against them. It's one of the simpler pages — no charts library, just custom CSS progress bars.</p>
+<h3 id="fetching-budgets">Fetching Budgets</h3>
+<pre><code class="language-jsx">const fetchBudgets = async () =&gt; {
+  const res = await fetch(`/api/budgets/?month=${selectedMonth}`)
+  if (res.ok) setBudgets(await res.json())
+}
+</code></pre>
+<p>The <code>GET /api/budgets/?month=YYYY-MM</code> endpoint (from the budgets router) returns each budget with <code>budgeted</code>, <code>spent</code>, <code>remaining</code>, and <code>percent_used</code> fields pre-calculated by the backend.</p>
+<h3 id="adding-a-budget">Adding a Budget</h3>
+<p>Users pick a parent category and enter a dollar amount:</p>
+<pre><code class="language-jsx">const addBudget = async () =&gt; {
+  const res = await fetch('/api/budgets/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      category_short_desc: newBudget.category_short_desc,
+      month: selectedMonth,
+      amount: parseFloat(newBudget.amount),
+    }),
+  })
+  if (res.ok) fetchBudgets()
+}
+</code></pre>
+<h3 id="progress-bars">Progress Bars</h3>
+<p>Each budget renders as a horizontal bar showing spending progress:</p>
+<pre><code class="language-jsx">const getBarColor = (percent) =&gt; {
+  if (percent &gt;= 100) return 'red'
+  if (percent &gt;= 75) return 'yellow'
+  return 'green'
+}
+
+&lt;div className=&quot;budget-bar&quot;&gt;
+  &lt;div
+    className={`budget-bar-fill ${getBarColor(budget.percent_used)}`}
+    style={{ width: `${Math.min(budget.percent_used, 100)}%` }}
+  /&gt;
+&lt;/div&gt;
+</code></pre>
+<p>The bar turns yellow at 75% and red at 100%. The remaining amount is displayed to the right — green if under budget, red if over.</p>
+<hr>
+<h2 id="58-recurring-monitor-recurringmonitorjsx">5.8 Recurring Monitor (<code>RecurringMonitor.jsx</code>)</h2>
+<p>The Recurring Monitor shows month-by-month spending for categories flagged as recurring (subscriptions, rent, utilities, etc.). It fetches data from <code>GET /api/transactions/recurring-monitor</code>:</p>
+<pre><code class="language-jsx">const fetchRecurringData = async () =&gt; {
+  const res = await fetch(`/api/transactions/recurring-monitor?year=${year}`)
+  if (res.ok) setData(await res.json())
+}
+</code></pre>
+<p>The API returns a matrix: each row is a recurring subcategory, each column is a month, and each cell is the total spent that month. The frontend renders this as a horizontally scrolling table.</p>
+<h3 id="category-filter">Category Filter</h3>
+<p>The page includes a custom category filter dropdown that lets you show/hide individual recurring categories. This uses a checkbox-tree UI:</p>
+<pre><code class="language-jsx">function CategoryFilterDropdown({ recurringParents, enabledCategories, ... }) {
+  // Each parent row has a checkbox with three states:
+  // checked (all children enabled), unchecked (none), indeterminate (some)
+  &lt;input
+    type=&quot;checkbox&quot;
+    checked={allChecked}
+    ref={el =&gt; { if (el) el.indeterminate = someChecked &amp;&amp; !allChecked }}
+    onChange={() =&gt; toggleParentCheckbox(parent)}
+  /&gt;
+}
+</code></pre>
+<p>The <code>indeterminate</code> state on the checkbox is set via a <code>ref</code> callback because HTML doesn't have an <code>indeterminate</code> attribute — you can only set it through JavaScript.</p>
+<h3 id="month-over-month-changes">Month-over-Month Changes</h3>
+<p>Each cell in the table shows not just the amount but also a visual indicator if the amount changed significantly from the previous month. This helps catch subscription price increases or unexpected charges.</p>
+<hr>
+<h2 id="59-accounts-page-accountsjsx">5.9 Accounts Page (<code>Accounts.jsx</code>)</h2>
+<p>The Accounts page handles three things: managing bank accounts, connecting to Plaid, and importing CSV files.</p>
+<h3 id="account-cards">Account Cards</h3>
+<p>Each account renders as a card showing its name, type (checking/savings/credit), connection status, balance, last sync time, transaction count, and date coverage:</p>
+<pre><code class="language-jsx">function AccountCard({ account, onRefresh }) {
+  const Icon = accountIcons[account.account_type] || Landmark
+  const status = statusColors[account.plaid_connection_status]
+  const isConnected = account.plaid_connection_status === 'connected'
+
+  return (
+    &lt;div className=&quot;acct-card&quot;&gt;
+      &lt;div className=&quot;acct-card-header&quot;&gt;
+        &lt;Icon size={20} /&gt;
+        &lt;div className=&quot;acct-card-info&quot;&gt;
+          &lt;div className=&quot;acct-card-name&quot;&gt;{account.name}&lt;/div&gt;
+          &lt;div className=&quot;acct-card-type&quot;&gt;{account.account_type}&lt;/div&gt;
+        &lt;/div&gt;
+        &lt;div className=&quot;acct-status-badge&quot; style={statusStyles}&gt;
+          {isConnected ? &lt;Wifi size={12} /&gt; : &lt;WifiOff size={12} /&gt;}
+          {account.plaid_connection_status}
+        &lt;/div&gt;
+      &lt;/div&gt;
+      {/* Balances, sync info, action buttons */}
     &lt;/div&gt;
   )
 }
 </code></pre>
-<hr>
-<h2 id="52-review-queue-reviewqueuejsx">5.2 Review Queue (<code>ReviewQueue.jsx</code>)</h2>
-<p>The primary workflow page. This is where users spend most of their time categorizing incoming transactions.</p>
-<p><strong>Features (948 lines):</strong></p>
-<ul>
-<li><strong>Pending section</strong>: Transactions awaiting categorization, shown with AI predictions and confidence badges</li>
-<li><strong>Staged section</strong>: Transactions that have been categorized but not yet committed</li>
-<li><strong>CategoryPicker</strong>: A hierarchical dropdown component that shows parent → child categories</li>
-<li><strong>Batch categorization</strong>: Select multiple transactions (with shift-click range selection), pick a category, and categorize all at once</li>
-<li><strong>Sort control</strong>: Toggle between newest-first and oldest-first</li>
-<li><strong>Search</strong>: Filter pending transactions by description text</li>
-<li><strong>Category filter</strong>: Filter to show only transactions predicted for a specific category</li>
-<li><strong>Confidence indicators</strong>: Color-coded badges showing how certain the AI prediction is</li>
-</ul>
-<p>The two-phase review pattern works like this:</p>
+<p>Connected accounts show Sync Now, Refresh Balances, and Disconnect buttons. Disconnected accounts show a Link Bank button that initiates the Plaid flow.</p>
+<h3 id="the-plaid-link-button">The Plaid Link Button</h3>
+<p>Connecting a bank account is a two-step process:</p>
 <ol>
-<li>User clicks a pending transaction and picks a category → moves to "staged" (status: <code>pending_save</code>)</li>
-<li>User reviews all staged transactions → clicks "Save All" → committed (status: <code>confirmed</code>)</li>
+<li><strong>Create a link token</strong> by calling <code>POST /api/accounts/link/token</code> — this gives us a one-time-use token from Plaid.</li>
+<li><strong>Open Plaid Link</strong> — the <code>react-plaid-link</code> library opens a modal where the user logs into their bank.</li>
+<li><strong>Exchange the token</strong> — when the user completes the bank login, Plaid gives us a <code>public_token</code>. We send it to <code>POST /api/accounts/link/exchange</code> which converts it to a permanent <code>access_token</code>.</li>
 </ol>
-<p>This prevents accidental commits and lets users batch their work.</p>
-<hr>
-<h2 id="53-spending-spendingjsx">5.3 Spending (<code>Spending.jsx</code>)</h2>
-<p>Monthly spending analysis with interactive charts.</p>
-<p><strong>Features (502 lines):</strong></p>
-<ul>
-<li><strong>Month selector</strong>: Navigate between months</li>
-<li><strong>Bar chart</strong>: Monthly spending trend using Recharts <code>BarChart</code></li>
-<li><strong>Pie chart</strong>: Category distribution using Recharts <code>PieChart</code></li>
-<li><strong>Category table</strong>: Grouped by parent category (e.g., "Food" expands to show Groceries, Fast Food, Restaurant), with amounts and percentages</li>
-<li><strong>Transaction drill-down</strong>: Click a category row to see individual transactions</li>
-<li><strong>Sparkline trends</strong>: Tiny line charts showing 6-month spending trends per category</li>
-<li><strong>Inline recategorization</strong>: Change a transaction's category directly from the spending view</li>
-</ul>
-<p>The sparkline component is reusable:</p>
-<pre><code class="language-jsx">function Sparkline({ data, width = 60, height = 20, color = '#6c5ce7' }) {
-  if (!data || data.length &lt; 2) return null
-  const max = Math.max(...data)
-  const min = Math.min(...data)
-  const range = max - min || 1
-  const points = data.map((v, i) =&gt;
-    `${(i / (data.length - 1)) * width},${height - ((v - min) / range) * height}`
-  ).join(' ')
+<p>The implementation splits this into two components to handle a React hooks constraint:</p>
+<pre><code class="language-jsx">function PlaidLinkButton({ accountId, onSuccess }) {
+  const [linkToken, setLinkToken] = useState(null)
+
+  const fetchLinkToken = async () =&gt; {
+    const res = await fetch('/api/accounts/link/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_id: accountId }),
+    })
+    const data = await res.json()
+    if (res.ok) setLinkToken(data.link_token)
+  }
+
   return (
-    &lt;svg width={width} height={height}&gt;
-      &lt;polyline points={points} fill=&quot;none&quot; stroke={color} strokeWidth=&quot;1.5&quot; /&gt;
-    &lt;/svg&gt;
+    &lt;&gt;
+      &lt;button onClick={fetchLinkToken}&gt;Link Bank&lt;/button&gt;
+      {linkToken &amp;&amp; (
+        &lt;PlaidLinkOpener token={linkToken} onSuccess={onSuccess} /&gt;
+      )}
+    &lt;/&gt;
   )
 }
-</code></pre>
-<hr>
-<h2 id="54-cash-flow-cashflowjsx">5.4 Cash Flow (<code>CashFlow.jsx</code>)</h2>
-<p>Biweekly cash flow analysis showing income vs. expenses over time.</p>
-<p><strong>Features (868 lines):</strong></p>
-<ul>
-<li><strong>Area chart</strong>: Stacked income (green) and expense (red) areas over biweekly periods using Recharts <code>AreaChart</code></li>
-<li><strong>Year selector</strong>: Switch between years</li>
-<li><strong>Expense drivers</strong>: Top spending categories ranked by amount with sparkline trends</li>
-<li><strong>Income drivers</strong>: Income sources with sparkline trends</li>
-<li><strong>Drill-down</strong>: Click any category to see its transactions for the selected period</li>
-<li><strong>Side-by-side view</strong>: Income and expense breakdowns shown in parallel columns</li>
-<li><strong>Excluded categories</strong>: Section listing categories excluded from cash flow analysis (like balance adjustments)</li>
-</ul>
-<hr>
-<h2 id="55-recurring-monitor-recurringmonitorjsx">5.5 Recurring Monitor (<code>RecurringMonitor.jsx</code>)</h2>
-<p>Tracks subscription and recurring charges across months.</p>
-<p><strong>Features:</strong></p>
-<ul>
-<li><strong>Monthly grid</strong>: Rows are recurring categories, columns are months. Each cell shows the charge amount for that month</li>
-<li><strong>Category filter</strong>: Toggle which recurring categories to show/hide</li>
-<li><strong>Change indicators</strong>: Up/down arrows showing month-to-month changes in amounts</li>
-<li><strong>Net totals</strong>: Row showing net recurring spend per month (inflows minus outflows)</li>
-<li><strong>Transaction drill-down</strong>: Click a cell to see the specific transactions for that category/month</li>
-<li><strong>Inline recategorization</strong>: Move transactions to different categories directly</li>
-</ul>
-<hr>
-<h2 id="56-budget-budgetjsx">5.6 Budget (<code>Budget.jsx</code>)</h2>
-<p>Set monthly budget targets and track progress against actual spending.</p>
-<p><strong>Features (206 lines):</strong></p>
-<ul>
-<li><strong>Budget list</strong>: Shows each budgeted category with a progress bar</li>
-<li><strong>Progress colors</strong>: Green (under 75%), yellow (75–100%), red (over budget)</li>
-<li><strong>Totals row</strong>: Sum of all budgets vs. sum of all spending</li>
-<li><strong>Add/edit budget</strong>: Form to set a budget amount for a category + month</li>
-<li><strong>Month selector</strong>: Navigate between months</li>
-</ul>
-<pre><code class="language-jsx">// Progress bar coloring logic
-const getProgressColor = (percent) =&gt; {
-  if (percent &gt; 100) return '#e74c3c'  // Over budget — red
-  if (percent &gt; 75) return '#f39c12'   // Warning — yellow
-  return '#2ecc71'                     // On track — green
+
+function PlaidLinkOpener({ token, onSuccess, onExit }) {
+  const { open, ready } = usePlaidLink({ token, onSuccess, onExit })
+  useEffect(() =&gt; { if (ready) open() }, [ready, open])
+  return null  // Renders nothing — just triggers Plaid Link
 }
 </code></pre>
-<hr>
-<h2 id="57-accounts-accountsjsx">5.7 Accounts (<code>Accounts.jsx</code>)</h2>
-<p>Bank account management and CSV import.</p>
-<p><strong>Features:</strong></p>
+<p>The <code>PlaidLinkOpener</code> is a separate component because <code>usePlaidLink</code> is a hook that must be called unconditionally. We only mount <code>PlaidLinkOpener</code> after we have a token, which triggers the <code>useEffect</code> to open the Plaid modal.</p>
+<p>If the user's Plaid credentials aren't configured, the button shows a helpful error message explaining how to add them to <code>~/BudgetApp/.env</code> and suggesting CSV import as an alternative.</p>
+<h3 id="csv-import">CSV Import</h3>
+<p>Below the account cards is a drag-and-drop CSV upload zone:</p>
+<pre><code class="language-jsx">&lt;div
+  className=&quot;upload-zone&quot;
+  onDragOver={(e) =&gt; e.preventDefault()}
+  onDrop={handleDrop}
+  onClick={() =&gt; fileRef.current?.click()}
+&gt;
+  &lt;Upload size={40} /&gt;
+  &lt;p&gt;Drop a CSV file here or click to browse&lt;/p&gt;
+&lt;/div&gt;
+</code></pre>
+<p>The upload supports two modes:</p>
 <ul>
-<li><strong>Account cards</strong>: One card per bank account showing name, institution, connection status, current balance, transaction count, and date coverage</li>
-<li><strong>Plaid Link</strong>: "Connect" button opens the Plaid Link widget for linking bank accounts</li>
-<li><strong>Sync buttons</strong>: Individual sync per account and "Sync All" button</li>
-<li><strong>Balance refresh</strong>: Pull latest balances from Plaid</li>
-<li><strong>Disconnect</strong>: Unlink an account from Plaid (preserves transaction data)</li>
-<li><strong>CSV import</strong>: Drag-and-drop file upload with bank format auto-detection (Discover, SoFi Checking, SoFi Savings, Wells Fargo)</li>
-<li><strong>Sync history link</strong>: Navigation card that opens the dedicated sync history page</li>
+<li><strong>Auto-detect</strong> (default) — calls <code>POST /api/import/csv/auto-detect</code> which examines the CSV headers and matches against known bank formats.</li>
+<li><strong>Manual selection</strong> — the user picks their bank from a dropdown, which calls <code>POST /api/import/csv?bank={name}</code> with the specific parser.</li>
 </ul>
-<p>The Plaid Link integration:</p>
-<pre><code class="language-jsx">const { open, ready } = usePlaidLink({
-  token: linkToken,
-  onSuccess: async (publicToken) =&gt; {
-    await fetch('/api/accounts/link/exchange', {
+<p>After upload, it shows a success message with import counts (new transactions, skipped duplicates, detected bank format) or an error message.</p>
+<h3 id="add-account-form">Add Account Form</h3>
+<p>Users can also create accounts manually (for CSV-only use) via an inline form that calls <code>POST /api/accounts/</code>:</p>
+<pre><code class="language-jsx">function AddAccountForm({ onCreated, onCancel }) {
+  const handleSubmit = async (e) =&gt; {
+    e.preventDefault()
+    const res = await fetch('/api/accounts/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        account_id: selectedAccount,
-        public_token: publicToken,
+        name: name.trim(),
+        institution: institution.trim().toLowerCase(),
+        account_type: accountType,
       }),
     })
-    fetchAccounts()
-  },
-  onExit: () =&gt; setLinkToken(null),
-})
-</code></pre>
-<hr>
-<h2 id="58-data-browser-datajsx">5.8 Data Browser (<code>Data.jsx</code>)</h2>
-<p>A full-featured transaction browser for exploring and managing all data.</p>
-<p><strong>Features (805 lines):</strong></p>
-<ul>
-<li><strong>Filtering</strong>: By category (hierarchical picker), year, account, source (plaid/csv/archive), and status</li>
-<li><strong>Full-text search</strong>: Debounced search across descriptions and merchant names</li>
-<li><strong>Multi-select</strong>: Checkbox selection with shift-click for range selection</li>
-<li><strong>Bulk categorization</strong>: Categorize multiple selected transactions at once</li>
-<li><strong>Bulk delete</strong>: Delete multiple transactions (with soft-delete to audit log)</li>
-<li><strong>Pagination</strong>: Configurable page size (25, 50, 100, All)</li>
-<li><strong>Sort toggle</strong>: Date ascending/descending</li>
-<li><strong>Status indicators</strong>: Color-coded status badges (pending, staged, confirmed, auto-confirmed)</li>
-<li><strong>Individual delete</strong>: Trash icon per row with confirmation</li>
-</ul>
-<hr>
-<h2 id="59-categories-categoriesjsx">5.9 Categories (<code>Categories.jsx</code>)</h2>
-<p>Manage the two-level category taxonomy.</p>
-<p><strong>Features (713 lines):</strong></p>
-<ul>
-<li><strong>Tree view</strong>: Parent categories expand to show children</li>
-<li><strong>Create</strong>: Add new parent or child categories with custom display names and colors</li>
-<li><strong>Rename</strong>: Inline editing of display names</li>
-<li><strong>Move</strong>: Drag a subcategory to a different parent</li>
-<li><strong>Merge</strong>: Combine two categories (moves all transactions, mappings, rules, and budgets to the target)</li>
-<li><strong>Delete</strong>: Remove empty categories (prevents deletion if transactions exist)</li>
-<li><strong>Toggle recurring</strong>: Mark/unmark categories as recurring</li>
-<li><strong>Expand/collapse all</strong>: Bulk toggle for the tree view</li>
-<li><strong>Portal-based dropdowns</strong>: CategoryPicker uses React portals for proper z-index layering</li>
-</ul>
-<hr>
-<h2 id="510-settings-settingsjsx">5.10 Settings (<code>Settings.jsx</code>)</h2>
-<p>Application configuration.</p>
-<p><strong>Features:</strong></p>
-<ul>
-<li><strong>AI categorization</strong>: Set the Anthropic API key and auto-confirm confidence threshold</li>
-<li><strong>Email notifications</strong>: Configure Gmail integration for transaction alerts (email address, app password, recipient, batch interval)</li>
-<li><strong>Database location</strong>: Shows the path to <code>~/BudgetApp/budget.db</code></li>
-<li><strong>Deleted transactions link</strong>: Navigation card to the dedicated deleted transactions page (with count badge)</li>
-</ul>
-<hr>
-<h2 id="511-deleted-transactions-deletedtransactionsjsx">5.11 Deleted Transactions (<code>DeletedTransactions.jsx</code>)</h2>
-<p>Standalone page for managing the soft-delete audit log.</p>
-<p><strong>Features:</strong></p>
-<ul>
-<li><strong>Table</strong>: Shows deleted transactions with original date, description, amount, account, category, and deletion timestamp</li>
-<li><strong>Restore individual</strong>: Put a deleted transaction back in the main table</li>
-<li><strong>Restore bulk</strong>: Select and restore multiple at once</li>
-<li><strong>Purge individual</strong>: Permanently remove from the audit log (trash icon)</li>
-<li><strong>Clear all</strong>: Permanently remove all deleted transactions with a confirmation dialog</li>
-<li><strong>Back navigation</strong>: Arrow link to Settings</li>
-</ul>
-<hr>
-<h2 id="512-sync-history-synchistoryjsx">5.12 Sync History (<code>SyncHistory.jsx</code>)</h2>
-<p>Standalone page showing the audit trail of all Plaid sync operations.</p>
-<p><strong>Features:</strong></p>
-<ul>
-<li><strong>Date grouping</strong>: Sync logs grouped by date with separator rows</li>
-<li><strong>Summary header</strong>: Total successful/failed sync counts</li>
-<li><strong>Status icons</strong>: Checkmark for success, X for error, clock for pending</li>
-<li><strong>Trigger badges</strong>: Color-coded labels (scheduled, manual, initial, retry)</li>
-<li><strong>Change metrics</strong>: Added/modified/removed transaction counts per sync</li>
-<li><strong>Duration</strong>: How long each sync took</li>
-<li><strong>Error messages</strong>: Displayed for failed syncs</li>
-<li><strong>Refresh button</strong>: Manually reload the sync history</li>
-<li><strong>Back navigation</strong>: Arrow link to Accounts</li>
-</ul>
-<hr>
-<h2 id="513-css-styling-frontendsrcstylescss">5.13 CSS Styling (<code>frontend/src/styles.css</code>)</h2>
-<p>The app uses a dark theme with CSS custom properties (no CSS framework). The stylesheet is approximately 1500+ lines covering all components.</p>
-<h3 id="design-system">Design System</h3>
-<pre><code class="language-css">:root {
-  --bg-primary: #0f1117;
-  --bg-secondary: #1a1d27;
-  --bg-tertiary: #242836;
-  --text-primary: #e4e6eb;
-  --text-secondary: #8b8fa3;
-  --accent: #6c5ce7;
-  --accent-hover: #5a4bd1;
-  --green: #2ecc71;
-  --red: #e74c3c;
-  --yellow: #f39c12;
-  --border: #2a2e3d;
+    if (res.ok) onCreated(await res.json())
+  }
+  // Name, institution, type (checking/savings/credit) inputs
 }
 </code></pre>
-<h3 id="layout">Layout</h3>
-<pre><code class="language-css">.app {
-  display: flex;
-  min-height: 100vh;
-  background: var(--bg-primary);
-  color: var(--text-primary);
+<hr>
+<h2 id="510-data-page-datajsx">5.10 Data Page (<code>Data.jsx</code>)</h2>
+<p>The Data page is a full transaction browser — a paginated, filterable, sortable table of every transaction in the database. Think of it as the raw data view compared to the Spending page's analytical view.</p>
+<h3 id="filter-system">Filter System</h3>
+<p>The page offers five filters that all compose together:</p>
+<pre><code class="language-jsx">// Year selector (in the header)
+&lt;select value={selectedYear} onChange={handleYearChange}&gt;
+  &lt;option value=&quot;&quot;&gt;All Years&lt;/option&gt;
+  {availableYears.map(y =&gt; &lt;option key={y.year} value={y.year}&gt;{y.year}&lt;/option&gt;)}
+&lt;/select&gt;
+
+// Account, source, category, and search (in the card header)
+&lt;select value={selectedAccountId} onChange={handleAccountChange}&gt;...&lt;/select&gt;
+&lt;select value={selectedSource} onChange={...}&gt;
+  &lt;option value=&quot;&quot;&gt;All Sources&lt;/option&gt;
+  &lt;option value=&quot;plaid_sync&quot;&gt;Plaid&lt;/option&gt;
+  &lt;option value=&quot;csv_import&quot;&gt;CSV&lt;/option&gt;
+  &lt;option value=&quot;archive_import&quot;&gt;Archive&lt;/option&gt;
+&lt;/select&gt;
+&lt;DataCategoryFilter categoryTree={categoryTree} value={selectedCategory} onChange={...} /&gt;
+&lt;input type=&quot;text&quot; placeholder=&quot;Search descriptions...&quot; onChange={handleSearchInput} /&gt;
+</code></pre>
+<p>Available years come from <code>GET /api/transactions/years</code>. The account dropdown filters to only show accounts that have data in the selected year.</p>
+<p>All filters are persisted to <code>sessionStorage</code> so they survive page navigation (but not browser close). Search uses a debounced input — it waits 300ms after the user stops typing before fetching:</p>
+<pre><code class="language-jsx">const handleSearchInput = (val) =&gt; {
+  setSearchInput(val)
+  clearTimeout(searchTimerRef.current)
+  searchTimerRef.current = setTimeout(() =&gt; {
+    setSearch(val)
+    setOffset(0)
+  }, 300)
+}
+</code></pre>
+<h3 id="multi-select-and-bulk-actions">Multi-Select and Bulk Actions</h3>
+<p>Rows can be selected individually (click) or in ranges (shift-click):</p>
+<pre><code class="language-jsx">const toggleSelect = (id, e) =&gt; {
+  const currentIndex = sortedTransactions.findIndex(t =&gt; t.id === id)
+  if (e?.shiftKey &amp;&amp; lastClickedIndexRef.current != null) {
+    // Select range between last click and current
+    const start = Math.min(lastClickedIndexRef.current, currentIndex)
+    const end = Math.max(lastClickedIndexRef.current, currentIndex)
+    const rangeIds = sortedTransactions.slice(start, end + 1).map(t =&gt; t.id)
+    setSelectedIds(prev =&gt; {
+      const next = new Set(prev)
+      rangeIds.forEach(rid =&gt; next.add(rid))
+      return next
+    })
+  } else {
+    // Toggle single selection
+    setSelectedIds(prev =&gt; {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  lastClickedIndexRef.current = currentIndex
+}
+</code></pre>
+<p>When transactions are selected, a bulk action bar appears with "Categorize" and "Delete" buttons. Bulk categorize opens the <code>CategoryPicker</code> and applies the chosen category to all selected transactions via <code>POST /api/transactions/bulk-review</code>. Bulk delete calls <code>POST /api/transactions/bulk-delete</code>.</p>
+<h3 id="inline-category-editing">Inline Category Editing</h3>
+<p>Each transaction's category cell is clickable. Clicking it opens a <code>CategoryPicker</code> dropdown anchored to that cell, allowing you to change the category without leaving the page:</p>
+<pre><code class="language-jsx">&lt;span
+  className=&quot;data-cat-badge clickable&quot;
+  onClick={() =&gt; setEditingTxnId(editingTxnId === txn.id ? null : txn.id)}
+&gt;
+  {txn.category_name || (txn.predicted_category_name ? `${txn.predicted_category_name}?` : '—')}
+&lt;/span&gt;
+{editingTxnId === txn.id &amp;&amp; (
+  &lt;CategoryPicker
+    categoryTree={categoryTree}
+    onSelect={(shortDesc) =&gt; handleCategoryChange(txn.id, shortDesc)}
+    onCancel={() =&gt; setEditingTxnId(null)}
+  /&gt;
+)}
+</code></pre>
+<p>Predicted categories (from the AI) show with a <code>?</code> suffix and a different visual style to distinguish them from confirmed categories.</p>
+<hr>
+<h2 id="511-categories-page-categoriesjsx">5.11 Categories Page (<code>Categories.jsx</code>)</h2>
+<p>The Categories page provides a tree editor for managing the category hierarchy. It's the administrative interface for the <code>Category</code> model.</p>
+<h3 id="tree-rendering">Tree Rendering</h3>
+<p>Categories are displayed as an expandable tree. Parent categories (those without a <code>parent_id</code>) show at the top level. Clicking the arrow expands to show subcategories:</p>
+<pre><code class="language-jsx">{categoryTree.map(parent =&gt; (
+  &lt;div key={parent.id} className=&quot;cat-tree-parent&quot;&gt;
+    &lt;div className=&quot;cat-tree-row&quot; onClick={() =&gt; toggleExpand(parent.id)}&gt;
+      {expanded.has(parent.id) ? &lt;ChevronDown /&gt; : &lt;ChevronRight /&gt;}
+      &lt;span className=&quot;cat-color-dot&quot; style={{ background: parent.color }} /&gt;
+      &lt;span className=&quot;cat-name&quot;&gt;{parent.display_name}&lt;/span&gt;
+      &lt;span className=&quot;cat-short-desc&quot;&gt;{parent.short_desc}&lt;/span&gt;
+      &lt;div className=&quot;cat-actions&quot;&gt;
+        &lt;button onClick={() =&gt; startEdit(parent)}&gt;
+          &lt;Pencil size={14} /&gt;
+        &lt;/button&gt;
+        &lt;button onClick={() =&gt; startAddChild(parent)}&gt;
+          &lt;Plus size={14} /&gt;
+        &lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+    {expanded.has(parent.id) &amp;&amp; parent.children.map(child =&gt; (
+      &lt;div key={child.id} className=&quot;cat-tree-child&quot;&gt;
+        {/* Child row with edit, move, delete buttons */}
+      &lt;/div&gt;
+    ))}
+  &lt;/div&gt;
+))}
+</code></pre>
+<h3 id="inline-editing">Inline Editing</h3>
+<p>Clicking the edit button on a category replaces the row with an inline form (<code>CategoryForm</code>) that lets you change the display name, short key, color, and flags (is_recurring, is_income):</p>
+<pre><code class="language-jsx">function CategoryForm({ initial, isSubcategory, onSave, onCancel }) {
+  const [displayName, setDisplayName] = useState(initial?.display_name || '')
+  const [shortDesc, setShortDesc] = useState(initial?.short_desc || '')
+  const [autoSlug, setAutoSlug] = useState(!initial)
+
+  const handleDisplayNameChange = (val) =&gt; {
+    setDisplayName(val)
+    if (autoSlug) {
+      // Auto-generate short_desc from display name
+      setShortDesc(val.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, ''))
+    }
+  }
+}
+</code></pre>
+<p>For new categories, the <code>short_desc</code> is auto-generated from the display name as you type (e.g., "Coffee Shops" → "coffee_shops"). Once you manually edit the short_desc, auto-generation stops.</p>
+<h3 id="move-to-parent">Move to Parent</h3>
+<p>Subcategories can be moved between parent categories using a dropdown picker. This calls <code>PATCH /api/categories/{id}</code> with the new <code>parent_id</code>, which triggers a re-render of the tree.</p>
+<h3 id="collapseexpand-all">Collapse/Expand All</h3>
+<p>Buttons at the top let you collapse or expand all parent categories at once, useful when the tree gets large.</p>
+<hr>
+<h2 id="512-investments-page-investmentsjsx">5.12 Investments Page (<code>Investments.jsx</code>)</h2>
+<p>The Investments page tracks your investment portfolio using the separate <code>investments.db</code> database. It shows account summaries, holdings by account, allocation charts, and recent investment transactions.</p>
+<h3 id="data-fetching_1">Data Fetching</h3>
+<p>The page fetches from three endpoints:</p>
+<pre><code class="language-jsx">const fetchData = async () =&gt; {
+  const [acctRes, holdingsRes, txnRes] = await Promise.all([
+    fetch('/api/investments/accounts'),
+    fetch('/api/investments/holdings'),
+    fetch('/api/investments/transactions?limit=50'),
+  ])
+  if (acctRes.ok) setAccounts(await acctRes.json())
+  if (holdingsRes.ok) setHoldings(await holdingsRes.json())
+  if (txnRes.ok) setTransactions(await txnRes.json())
+}
+</code></pre>
+<h3 id="portfolio-summary">Portfolio Summary</h3>
+<p>Stat cards show total portfolio value, today's change (dollar and percent), and total cost basis. Each value is formatted with color coding — green for gains, red for losses:</p>
+<pre><code class="language-jsx">&lt;div className=&quot;stat-card&quot;&gt;
+  &lt;div className=&quot;label&quot;&gt;Total Value&lt;/div&gt;
+  &lt;div className=&quot;value&quot;&gt;{fmt(totalValue)}&lt;/div&gt;
+&lt;/div&gt;
+&lt;div className=&quot;stat-card&quot;&gt;
+  &lt;div className=&quot;label&quot;&gt;Today's Change&lt;/div&gt;
+  &lt;div className={`value ${todayChange &gt;= 0 ? 'green' : 'red'}`}&gt;
+    {fmtSigned(todayChange)} ({fmtPct(todayChangePct)})
+  &lt;/div&gt;
+&lt;/div&gt;
+</code></pre>
+<h3 id="holdings-table">Holdings Table</h3>
+<p>Holdings are grouped by account and sorted by current value. Each row shows the ticker symbol, quantity, cost basis, current value, and gain/loss:</p>
+<pre><code class="language-jsx">{holdings.map(h =&gt; (
+  &lt;tr key={h.id}&gt;
+    &lt;td className=&quot;ticker&quot;&gt;{h.ticker_symbol}&lt;/td&gt;
+    &lt;td&gt;{fmtShares(h.quantity)}&lt;/td&gt;
+    &lt;td&gt;{fmt(h.cost_basis)}&lt;/td&gt;
+    &lt;td&gt;{fmt(h.current_value)}&lt;/td&gt;
+    &lt;td className={h.gain_loss &gt;= 0 ? 'green' : 'red'}&gt;
+      {fmtSigned(h.gain_loss)} ({fmtPct(h.gain_loss_pct)})
+    &lt;/td&gt;
+  &lt;/tr&gt;
+))}
+</code></pre>
+<h3 id="allocation-pie-chart">Allocation Pie Chart</h3>
+<p>A Recharts <code>PieChart</code> shows asset allocation by holding:</p>
+<pre><code class="language-jsx">&lt;PieChart&gt;
+  &lt;Pie data={allocationData} dataKey=&quot;value&quot; nameKey=&quot;ticker&quot;&gt;
+    {allocationData.map((_, i) =&gt; (
+      &lt;Cell key={i} fill={COLORS[i % COLORS.length]} /&gt;
+    ))}
+  &lt;/Pie&gt;
+&lt;/PieChart&gt;
+</code></pre>
+<h3 id="adding-investment-accounts">Adding Investment Accounts</h3>
+<p>The page supports both Plaid-linked and manual investment accounts. Manual entry lets you create an account and add holdings with ticker, quantity, and cost basis. The backend's price fetcher then automatically looks up current prices from Yahoo Finance.</p>
+<hr>
+<h2 id="513-insights-page-insightsjsx">5.13 Insights Page (<code>Insights.jsx</code>)</h2>
+<p>The Insights page is the AI-powered financial advisor. It uses Server-Sent Events (SSE) to stream Claude's analysis in real-time.</p>
+<h3 id="running-an-analysis">Running an Analysis</h3>
+<p>The user clicks "Run Analysis" which streams from <code>POST /api/insights/analyze</code>:</p>
+<pre><code class="language-jsx">const runAnalysis = async () =&gt; {
+  setAnalyzing(true)
+  setAnalysis('')
+
+  let fullText = ''
+  await streamFromEndpoint(
+    '/api/insights/analyze',
+    { context: userContext },
+    (token) =&gt; {       // onToken: append each chunk
+      fullText += token
+      setAnalysis(fullText)
+    },
+    () =&gt; {            // onDone: finalize
+      setAnalyzing(false)
+      setChatHistory([{ role: 'assistant', content: fullText }])
+    },
+    (errMsg) =&gt; {      // onError
+      setError(errMsg)
+      setAnalyzing(false)
+    },
+  )
+}
+</code></pre>
+<h3 id="sse-streaming">SSE Streaming</h3>
+<p>The <code>streamFromEndpoint</code> helper reads from the response body as a stream and parses SSE events:</p>
+<pre><code class="language-jsx">const streamFromEndpoint = async (url, body, onToken, onDone, onError) =&gt; {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() || ''
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const data = line.slice(6).trim()
+        if (data === '[DONE]') { onDone(); return }
+        const event = JSON.parse(data)
+        if (event.type === 'text') onToken(event.content)
+        if (event.type === 'error') { onError(event.content); return }
+      }
+    }
+  }
+  onDone()
+}
+</code></pre>
+<p>This reads the response as a stream of chunks, buffers them until it has complete lines, and parses each <code>data:</code> line as a JSON event. The text appears progressively in the UI as Claude generates it.</p>
+<h3 id="markdown-rendering">Markdown Rendering</h3>
+<p>The <code>renderMarkdown</code> function converts Claude's response (which uses markdown) into React elements:</p>
+<pre><code class="language-jsx">function renderMarkdown(text) {
+  const lines = text.split('\n')
+  // Handles: ## headers → &lt;h3&gt;
+  //          **bold** → &lt;strong&gt;
+  //          - bullets → &lt;ul&gt;&lt;li&gt;
+  //          $amounts → colored &lt;span&gt;
+  for (const line of lines) {
+    if (trimmed.startsWith('## ')) {
+      elements.push(&lt;h3 className=&quot;insights-section-header&quot;&gt;{trimmed.slice(3)}&lt;/h3&gt;)
+    }
+    // ... etc
+  }
+}
+</code></pre>
+<p>Dollar amounts are auto-highlighted: positive amounts (prefixed with <code>+$</code>) get green styling, negative amounts get red.</p>
+<h3 id="follow-up-chat">Follow-up Chat</h3>
+<p>After the initial analysis, a chat interface appears. Users can ask follow-up questions ("What if I cancel Netflix?", "How much am I spending on groceries?") which stream from <code>POST /api/insights/chat</code>:</p>
+<pre><code class="language-jsx">const sendMessage = async () =&gt; {
+  const newHistory = [...chatHistory, { role: 'user', content: chatInput }]
+  setChatHistory(newHistory)
+
+  await streamFromEndpoint(
+    '/api/insights/chat',
+    { message: chatInput, history: chatHistory, context: userContext },
+    (token) =&gt; setChatStreamText(prev =&gt; prev + token),
+    () =&gt; setChatHistory(prev =&gt; [...prev, { role: 'assistant', content: responseText }]),
+    (errMsg) =&gt; { /* handle error */ },
+  )
+}
+</code></pre>
+<p>The chat sends the full conversation history so Claude has context. Analysis and chat are persisted to <code>localStorage</code> so they survive page navigation.</p>
+<hr>
+<h2 id="514-settings-page-settingsjsx">5.14 Settings Page (<code>Settings.jsx</code>)</h2>
+<p>The Settings page is where users configure API keys and app preferences without needing to edit files.</p>
+<h3 id="loading-and-saving">Loading and Saving</h3>
+<p>Settings are fetched from <code>GET /api/settings/</code> and saved to <code>POST /api/settings/</code>:</p>
+<pre><code class="language-jsx">const loadSettings = async () =&gt; {
+  const res = await fetch('/api/settings/')
+  if (res.ok) {
+    const data = await res.json()
+    for (const [key, info] of Object.entries(data)) {
+      newSettings[key] = info.value || ''
+      meta[key] = { is_set: info.is_set, source: info.source }
+    }
+  }
 }
 
-.sidebar {
-  width: 220px;
-  background: var(--bg-secondary);
-  border-right: 1px solid var(--border);
-  position: fixed;
-  height: 100vh;
-  overflow-y: auto;
-}
-
-.main-content {
-  flex: 1;
-  margin-left: 220px;
-  padding: 24px 32px;
+const handleSave = async () =&gt; {
+  const payload = {}
+  for (const key of dbKeys) {
+    payload[key] = settings[key]
+  }
+  await fetch('/api/settings/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ settings: payload }),
+  })
 }
 </code></pre>
-<h3 id="reusable-component-classes">Reusable Component Classes</h3>
-<p>The CSS follows a consistent naming convention:</p>
+<h3 id="source-badges">Source Badges</h3>
+<p>Each setting shows a badge indicating where its current value comes from:</p>
+<pre><code class="language-jsx">const sourceLabel = (key) =&gt; {
+  const meta = settingsMeta[key]
+  if (meta.source === 'database') return &lt;span className=&quot;settings-source-badge db&quot;&gt;Saved in app&lt;/span&gt;
+  if (meta.source === 'env') return &lt;span className=&quot;settings-source-badge env&quot;&gt;From .env file&lt;/span&gt;
+  return &lt;span className=&quot;settings-source-badge none&quot;&gt;Not set&lt;/span&gt;
+}
+</code></pre>
+<p>This helps users understand whether a value was saved through the UI, loaded from a <code>.env</code> file, or isn't configured at all.</p>
+<h3 id="settings-sections">Settings Sections</h3>
+<p>The page is organized into cards:</p>
 <ul>
-<li><code>.card</code> — Base container with border, radius, and padding</li>
-<li><code>.data-table</code> — Styled tables with hover effects and striped rows</li>
-<li><code>.stats-row</code> / <code>.stat-card</code> — Stat card grid layouts</li>
-<li><code>.badge</code> — Small count badges (used in sidebar and tables)</li>
-<li><code>.btn-primary</code> / <code>.btn-secondary</code> / <code>.btn-danger</code> — Button variants</li>
-<li><code>.btn-danger-outline</code> — Transparent button with red border (for destructive actions)</li>
-<li><code>.empty-state</code> — Centered placeholder when no data exists</li>
-<li><code>.settings-link-card</code> — Clickable navigation cards (used in Settings and Accounts)</li>
+<li><strong>Plaid</strong> — Client ID, sandbox/production secrets, environment, recovery code, encryption key</li>
+<li><strong>AI Categorization</strong> — Anthropic API key, auto-confirm threshold</li>
+<li><strong>Email Notifications</strong> — Enable/disable toggle, Gmail address, app password, batch interval (Phase 3 — not fully implemented yet)</li>
+<li><strong>Database</strong> — Shows the database location (<code>~/BudgetApp/budget.db</code>) as read-only info</li>
 </ul>
-<h3 id="chart-integration">Chart Integration</h3>
-<p>Recharts components are styled with CSS overrides:</p>
-<pre><code class="language-css">.recharts-cartesian-axis-tick-value {
-  fill: var(--text-secondary);
-  font-size: 12px;
-}
-
-.recharts-tooltip-wrapper {
-  outline: none;
-}
-</code></pre>
+<p>At the bottom, a link to <strong>Deleted Transactions</strong> shows a badge with the count of soft-deleted transactions.</p>
 <hr>
-<h2 id="514-entry-point-frontendsrcmainjsx">5.14 Entry Point (<code>frontend/src/main.jsx</code>)</h2>
+<h2 id="515-supporting-pages">5.15 Supporting Pages</h2>
+<p>Three smaller pages round out the frontend:</p>
+<h3 id="deleted-transactions-deletedtransactionsjsx">Deleted Transactions (<code>DeletedTransactions.jsx</code>)</h3>
+<p>Accessed from Settings, this page lists all soft-deleted transactions (stored in the <code>DeletedTransaction</code> model). Users can restore individual transactions (moves them back to the <code>Transaction</code> table) or purge them permanently. It supports multi-select with shift-click for bulk operations.</p>
+<h3 id="sync-history-synchistoryjsx">Sync History (<code>SyncHistory.jsx</code>)</h3>
+<p>Accessed from the Accounts page, this shows a chronological log of all Plaid sync operations. Each entry shows the account name, trigger type (scheduled, manual, initial), result (success/error), transaction counts (added/modified/removed), and duration. Entries are grouped by date.</p>
+<h3 id="oauth-callback">OAuth Callback</h3>
+<p>A minimal page (defined inline in <code>App.jsx</code>) that handles Plaid's OAuth redirect by restoring the link session and completing the token exchange.</p>
+<hr>
+<h2 id="516-frontend-entry-point-mainjsx">5.16 Frontend Entry Point (<code>main.jsx</code>)</h2>
+<p>The entry point is minimal — it mounts the React app and imports the global stylesheet:</p>
 <pre><code class="language-jsx">import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
@@ -443,9 +1002,64 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   &lt;/React.StrictMode&gt;
 )
 </code></pre>
+<p><code>React.StrictMode</code> is a development-only wrapper that helps catch common bugs by double-invoking effects and render functions. It has no effect in production builds.</p>
+<hr>
+<h2 id="517-common-patterns-across-pages">5.17 Common Patterns Across Pages</h2>
+<p>Several patterns repeat throughout the frontend worth noting:</p>
+<h3 id="utility-functions">Utility Functions</h3>
+<p>Nearly every page defines local helper functions for formatting:</p>
+<pre><code class="language-jsx">function formatCurrency(amount) {
+  if (amount == null) return '—'
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency', currency: 'USD'
+  }).format(amount)
+}
+
+function formatDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00')
+  return d.toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric'
+  })
+}
+</code></pre>
+<p>The <code>+ 'T00:00:00'</code> on date strings prevents timezone offset issues — without it, <code>new Date('2024-01-15')</code> would be interpreted as UTC midnight, which could show as the previous day in Western Hemisphere timezones.</p>
+<h3 id="fetch-pattern">Fetch Pattern</h3>
+<p>Every API call follows the same pattern:</p>
+<pre><code class="language-jsx">const fetchSomething = async () =&gt; {
+  try {
+    const res = await fetch('/api/something')
+    if (res.ok) {
+      const data = await res.json()
+      setSomething(data)
+    }
+  } catch (err) {
+    console.error('Failed:', err)
+  }
+}
+
+useEffect(() =&gt; { fetchSomething() }, [])
+</code></pre>
+<p>All URLs use relative paths starting with <code>/api/</code> — in development, Vite's proxy (from Part 1) forwards these to the FastAPI backend. In production, Electron serves both frontend and backend from the same origin, so relative paths work naturally.</p>
+<h3 id="optimistic-updates">Optimistic Updates</h3>
+<p>Several pages update local state immediately after a successful API call rather than re-fetching:</p>
+<pre><code class="language-jsx">const handleCategoryChange = async (txnId, shortDesc) =&gt; {
+  const res = await fetch(`/api/transactions/${txnId}/review`, { ... })
+  if (res.ok) {
+    // Update local state instead of re-fetching
+    setTransactions(prev =&gt;
+      prev.map(txn =&gt;
+        txn.id === txnId
+          ? { ...txn, category_name: displayName, status: 'confirmed' }
+          : txn
+      )
+    )
+  }
+}
+</code></pre>
+<p>This makes the UI feel instant — the change appears immediately without waiting for a full data refresh.</p>
 <hr>
 <h2 id="whats-next">What's Next</h2>
-<p>With the full frontend built, Part 6 adds advanced features: AI-powered financial insights, investment portfolio tracking, the background sync scheduler, and the sync daemon for scheduled background updates.</p>
+<p>With the frontend complete, Part 6 covers the advanced features that tie everything together: the financial advisor backend, investment syncing and price fetching, budget and notification systems, and the archive importer. These features build on the foundation of Parts 2–5 to add the intelligence that makes the app genuinely useful.</p>
 <p>→ <a href="06-advanced-features.md">Part 6: Advanced Features</a></p>
       </div>
       <div class="docs-nav-footer">

@@ -1,46 +1,87 @@
 # Part 1 — Project Setup & Foundation
 
-This part covers the repository structure, dependency management, environment configuration, and the development launcher script. By the end, you'll have a runnable skeleton that starts a FastAPI backend, a React frontend, and an Electron window.
+Welcome to the Budget App walkthrough. Over these seven parts, you'll build a complete personal finance tracker from scratch — one that runs entirely on your own computer, categorizes transactions with AI, syncs with your real bank accounts, and tracks your investments. No cloud services store your data; everything lives in a local SQLite database.
+
+This first part gets the foundation in place: the project structure, all the dependencies, the development environment, and a working skeleton you can launch and see running in your browser.
 
 ---
 
-## 1.1 Repository Structure
+## 1.1 What We're Building
 
-Create the top-level directory layout:
+Before we write any code, let's understand what the finished app looks like. Budget App is a desktop application with three layers:
+
+**The backend** is a Python web server (FastAPI) that handles all the business logic. It talks to your bank through Plaid, categorizes transactions using Claude AI, and stores everything in a SQLite database. It runs on `localhost:8000` and exposes a REST API.
+
+**The frontend** is a React single-page application. It's the dashboard you interact with — charts, tables, a review queue for categorizing transactions, budget tracking, and more. During development it runs on `localhost:5173` with hot reloading.
+
+**The desktop shell** is Electron, which wraps both of these into a native macOS or Windows application. When you distribute the app, users double-click an icon and the whole thing just works — they never see a terminal or a browser.
+
+Here's how data flows through the system:
+
+```
+Bank Accounts (via Plaid API)
+        ↓
+  FastAPI Backend
+        ↓
+  3-Tier Categorization Engine
+    1. Amount Rules    — exact match on dollar amounts
+    2. Merchant Maps   — pattern matching on descriptions
+    3. Claude AI       — intelligent fallback for unknowns
+        ↓
+  SQLite Database (~/BudgetApp/budget.db)
+        ↓
+  React Frontend (charts, review queue, budgets)
+        ↓
+  Electron Window (native desktop app)
+```
+
+---
+
+## 1.2 Repository Structure
+
+Create the project directory with this layout:
 
 ```
 budget-app/
   backend/
     __init__.py
-    routers/
+    routers/           # API endpoint handlers
       __init__.py
-    services/
+    services/          # Business logic (Plaid, AI, sync)
       __init__.py
-  electron/
-  frontend/
-  scripts/
-  docs/
-  .env
-  .env.example
+      csv_parsers/     # Bank-specific CSV format handlers
+        __init__.py
+  electron/            # Desktop shell (main process, backend manager)
+  frontend/            # React app (Vite)
+  scripts/             # Utility scripts
+  docs/                # Website and walkthrough
+  .env                 # Your API keys (never committed)
+  .env.example         # Template for .env
   .gitignore
-  start.sh
-  pyproject.toml
+  start.sh             # One-command dev launcher
+  pyproject.toml       # Python dependencies
+  package.json         # Node/Electron dependencies
 ```
 
+Set it up:
+
 ```bash
-mkdir -p budget-app/{backend/{routers,services},electron,frontend,scripts,docs}
+mkdir -p budget-app/{backend/{routers,services/csv_parsers},electron,frontend,scripts,docs}
 touch budget-app/backend/__init__.py
 touch budget-app/backend/routers/__init__.py
 touch budget-app/backend/services/__init__.py
+touch budget-app/backend/services/csv_parsers/__init__.py
 cd budget-app
 git init
 ```
 
+The separation matters. The `backend/` directory is pure Python — it can run independently without Node or Electron. The `frontend/` directory is pure React — it can run in a browser without Electron. The `electron/` directory ties them together into a desktop app. This separation makes development much easier because you can work on any layer independently.
+
 ---
 
-## 1.2 Python Dependencies (`pyproject.toml`)
+## 1.3 Python Dependencies (`pyproject.toml`)
 
-We use [uv](https://docs.astral.sh/uv/) as the Python package manager. Create `pyproject.toml` at the project root:
+We use [uv](https://docs.astral.sh/uv/) as the Python package manager. It's dramatically faster than pip and handles virtual environments automatically. Create `pyproject.toml` at the project root:
 
 ```toml
 [project]
@@ -78,21 +119,27 @@ dev-dependencies = [
 ]
 ```
 
-Key dependencies and why they're needed:
+Here's why each dependency is needed:
 
-| Package | Purpose |
-|---------|---------|
-| `fastapi` + `uvicorn` | Web framework and ASGI server |
-| `sqlalchemy` | ORM for SQLite database |
-| `pydantic` | Request/response validation |
-| `python-dotenv` | Load `.env` files |
-| `anthropic` | Claude AI SDK for categorization and insights |
-| `pandas` + `openpyxl` | CSV/Excel import and data manipulation |
-| `python-multipart` | File upload support |
-| `plaid-python` | Plaid API SDK for bank account integration |
-| `cryptography` | Fernet encryption for Plaid access tokens at rest |
-| `apscheduler` | Background job scheduling (sync, price fetching) |
-| `yfinance` | Live stock price data for investment tracking |
+**Web framework and server:** `fastapi` is a modern Python web framework that gives you automatic API documentation, request validation, and dependency injection. `uvicorn` is the ASGI server that actually runs FastAPI. Together they're the backbone of the backend.
+
+**Database:** `sqlalchemy` is the ORM (Object-Relational Mapper) that lets you define database tables as Python classes and query them with Python code instead of raw SQL. We use it with SQLite, which stores the entire database in a single file — no database server needed.
+
+**Validation:** `pydantic` handles request/response validation. FastAPI uses it under the hood, so when someone sends a malformed request, they get a clear error message instead of a crash.
+
+**Configuration:** `python-dotenv` loads API keys and settings from a `.env` file into environment variables, keeping secrets out of your code.
+
+**AI:** `anthropic` is the official Claude SDK. We use it for transaction categorization (Tier 3) and financial insights.
+
+**Data handling:** `pandas` and `openpyxl` handle CSV and Excel file imports. `python-multipart` enables file upload support in FastAPI.
+
+**Banking:** `plaid-python` is the official Plaid SDK for connecting to bank accounts, fetching transactions, and getting balances.
+
+**Security:** `cryptography` provides Fernet symmetric encryption. We use it to encrypt Plaid access tokens before storing them in the database — if someone gets your database file, they can't access your bank without the encryption key.
+
+**Background jobs:** `apscheduler` runs periodic tasks like syncing transactions every 4 hours and refreshing stock prices during market hours.
+
+**Investments:** `yfinance` fetches live stock prices from Yahoo Finance.
 
 Install everything:
 
@@ -102,7 +149,7 @@ uv sync
 
 ---
 
-## 1.3 Frontend Dependencies
+## 1.4 Frontend Dependencies
 
 Scaffold the React frontend with Vite:
 
@@ -112,13 +159,21 @@ npm create vite@latest . -- --template react
 npm install
 ```
 
-Install the runtime dependencies:
+Then add the runtime libraries we'll need:
 
 ```bash
 npm install react-router-dom recharts lucide-react react-plaid-link
 ```
 
-Your `frontend/package.json` should look like:
+**`react-router-dom`** handles client-side navigation. Instead of full page reloads, clicking a sidebar link instantly swaps the main content area. We'll have 13+ routes — spending, budgets, accounts, investments, insights, and more.
+
+**`recharts`** is a charting library built specifically for React. We use it for spending pie charts, monthly trend bar charts, cash flow line charts, and budget progress bars.
+
+**`lucide-react`** provides clean, consistent icons. Every button, status badge, and navigation link uses a Lucide icon.
+
+**`react-plaid-link`** is the official React wrapper for Plaid Link — the bank connection widget. When users click "Link Bank," this library opens a secure modal where they can log into their bank. Plaid handles the authentication, and we get back a token we can use to fetch their transactions.
+
+Your `frontend/package.json` should look like this:
 
 ```json
 {
@@ -150,9 +205,11 @@ Your `frontend/package.json` should look like:
 
 ---
 
-## 1.4 Vite Configuration
+## 1.5 Vite Configuration
 
-Configure Vite to proxy API calls to the FastAPI backend. Create `frontend/vite.config.js`:
+During development, the React dev server and the FastAPI backend run on different ports. The frontend is on 5173, the backend on 8000. When the frontend calls `fetch('/api/transactions')`, that request needs to reach the backend — but by default, the browser sends it to port 5173 (where Vite is running), not port 8000.
+
+Vite's proxy solves this. Create `frontend/vite.config.js`:
 
 ```js
 import { defineConfig } from 'vite'
@@ -179,38 +236,31 @@ export default defineConfig({
 })
 ```
 
-The proxy configuration is important: during development, the React dev server runs on port 5173 and the FastAPI backend on port 8000. The proxy forwards any request starting with `/api` or `/health` to the backend, so the frontend can use relative URLs like `fetch('/api/transactions')` without hardcoding the backend URL.
+Any request that starts with `/api` or `/health` gets forwarded to the FastAPI backend. This means the frontend code can always use relative URLs like `/api/transactions` regardless of whether it's running in development (Vite proxy) or production (Electron serving everything from the same origin).
 
 ---
 
-## 1.5 Environment Variables
+## 1.6 Environment Variables
 
-Create `.env.example` as a template:
+Your API keys need to live somewhere, but they should never be committed to git. Create `.env.example` as a template that you *do* commit:
 
 ```bash
 # Budget App Environment Variables
 # Copy this file to .env and fill in your values
 
-# Anthropic API Key (for Claude AI categorization — Tier 3)
+# Anthropic API Key (for Claude AI categorization and insights)
 # Get yours at: https://console.anthropic.com
 ANTHROPIC_API_KEY=sk-ant-your-key-here
 
 # Plaid (automated bank syncing)
 # Sign up at: https://dashboard.plaid.com
 PLAID_CLIENT_ID=
-PLAID_SECRET=                  # Sandbox secret (from Plaid dashboard)
-PLAID_PRODUCTION_SECRET=       # Production secret (from Plaid dashboard)
+PLAID_SECRET=                  # Sandbox secret
+PLAID_PRODUCTION_SECRET=       # Production secret
 PLAID_ENV=sandbox              # sandbox, development, or production
-PLAID_TOKEN_ENCRYPTION_KEY=    # Auto-generated on first run if empty
 
-# Email Notifications (Phase 3)
-# Create a Gmail App Password at: Google Account > Security > App Passwords
-EMAIL_ADDRESS=
-EMAIL_APP_PASSWORD=
-EMAIL_RECIPIENT=
-
-# Cloudflare Tunnel (Phase 2 — webhook delivery)
-CLOUDFLARE_TUNNEL_TOKEN=
+# Encryption key for Plaid tokens (auto-generated on first run if empty)
+PLAID_TOKEN_ENCRYPTION_KEY=
 ```
 
 Copy it to create your actual `.env`:
@@ -220,7 +270,9 @@ cp .env.example .env
 # Edit .env with your API keys
 ```
 
-Add `.env` to `.gitignore` so secrets never get committed:
+A note about the Settings page: later in Part 5, we'll build a Settings page in the UI where you can enter these keys through the app itself. The Settings page saves credentials to the database, which means you don't *need* a `.env` file at all in production. But `.env` is still useful during development because it lets you set keys before the database even exists.
+
+Add `.env` to `.gitignore` so it never gets committed:
 
 ```
 # .gitignore
@@ -231,13 +283,40 @@ node_modules/
 frontend/dist/
 *.egg-info/
 .venv/
+dist/
+build/
+*.db
 ```
 
 ---
 
-## 1.6 Development Launcher (`start.sh`)
+## 1.7 The Data Directory
 
-The `start.sh` script starts all three services (backend, frontend, Electron) with a single command and tears them all down cleanly on exit:
+The app stores its data outside the project directory, in `~/BudgetApp/`. This is a deliberate choice — when you update the app or rebuild it, the project directory changes but your data stays safe. Here's what lives there:
+
+```
+~/BudgetApp/
+  budget.db            # Main database (transactions, accounts, categories)
+  investments.db       # Investment portfolio database
+  .env                 # Optional: API keys (loaded before CWD/.env)
+  .encryption_key      # Fernet key for Plaid token encryption
+  logs/
+    sync.log           # Background sync output
+```
+
+This directory is created automatically by the database module (Part 2), but you can create it now:
+
+```bash
+mkdir -p ~/BudgetApp/logs
+```
+
+Why two databases? The main `budget.db` handles everyday finances — transactions, accounts, categories, budgets. The `investments.db` handles portfolio tracking — holdings, securities, investment transactions. Keeping them separate means you could use the budgeting features without investment tracking, or vice versa. It also keeps the main database smaller and faster for the operations that happen most often.
+
+---
+
+## 1.8 Development Launcher (`start.sh`)
+
+During development, you need to start three things: the Python backend, the React dev server, and the Electron window. The `start.sh` script does all three with a single command and tears them all down cleanly when you're done:
 
 ```bash
 #!/bin/bash
@@ -297,40 +376,15 @@ Make it executable:
 chmod +x start.sh
 ```
 
-How it works:
+The `trap` command is the key detail. When you close the Electron window or press Ctrl+C, the `cleanup` function runs and kills both background processes. Without it, you'd have orphaned uvicorn and Vite processes running until you manually find and kill them.
 
-1. Starts the FastAPI backend with `uv run uvicorn` (with `--reload` for auto-restart on file changes)
-2. Starts the Vite dev server in a subshell
-3. Polls both services until they respond (up to 30 seconds each)
-4. Launches Electron in development mode
-5. When Electron closes (or Ctrl+C), the `trap` handler kills both background processes
+The `--reload` flag on uvicorn means the backend automatically restarts whenever you save a Python file. Vite has hot module replacement built in, so React changes appear instantly in the browser. This makes the development loop very fast — save a file, see the result immediately.
 
 ---
 
-## 1.7 Data Directory
+## 1.9 Minimal Backend Skeleton
 
-The app stores its database outside the project directory so it persists across updates and reinstalls:
-
-```
-~/BudgetApp/
-  budget.db          # Main transaction database
-  investments.db     # Investment portfolio database
-  logs/
-    sync.log         # Sync daemon output
-  .encryption_key    # Fernet key for Plaid token encryption
-```
-
-This directory is created automatically by the database module (covered in Part 2), but you can create it manually:
-
-```bash
-mkdir -p ~/BudgetApp/logs
-```
-
----
-
-## 1.8 Minimal Backend Skeleton
-
-To verify everything works, create a bare-bones FastAPI app. Create `backend/main.py`:
+Let's verify everything works with a bare-bones FastAPI app. Create `backend/main.py`:
 
 ```python
 """Budget App — FastAPI Backend"""
@@ -344,6 +398,7 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# CORS allows the frontend (on a different port) to call the backend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:5173"],
@@ -357,6 +412,8 @@ def health_check():
     return {"status": "ok", "version": "0.1.0"}
 ```
 
+CORS (Cross-Origin Resource Sharing) is a browser security feature. Without the CORS middleware, the browser would block the frontend from calling the backend because they're on different ports. The middleware tells the browser "yes, requests from localhost:5173 are allowed."
+
 Test it:
 
 ```bash
@@ -366,11 +423,13 @@ curl http://localhost:8000/health
 # → {"status":"ok","version":"0.1.0"}
 ```
 
+You can also visit `http://localhost:8000/docs` in your browser to see the auto-generated API documentation. FastAPI creates this from your endpoint definitions — as we add more routes, this page becomes a complete, interactive reference.
+
 ---
 
-## 1.9 Minimal Frontend Skeleton
+## 1.10 Minimal Frontend Skeleton
 
-Replace `frontend/src/App.jsx` with a placeholder:
+Replace `frontend/src/App.jsx` with a simple placeholder:
 
 ```jsx
 export default function App() {
@@ -404,10 +463,12 @@ cd frontend && npm run dev
 # Open http://localhost:5173 — you should see "Budget App"
 ```
 
+At this point you have a working full-stack skeleton. The backend serves a health endpoint, the frontend shows a page, and the Vite proxy connects them. Everything else we build from here is just adding features to this foundation.
+
 ---
 
 ## What's Next
 
-With the project scaffolded and all dependencies installed, Part 2 covers the SQLite database setup, SQLAlchemy ORM models, and the full FastAPI application skeleton with lifespan management.
+With the project scaffolded, Part 2 dives into the database layer. We'll set up SQLite with SQLAlchemy, define all the ORM models (accounts, transactions, categories, budgets, and more), wire up the lifespan management that initializes everything on startup, and build a lightweight migration system for evolving the schema over time.
 
 → [Part 2: Database Models & Backend Core](02-database-and-models.md)

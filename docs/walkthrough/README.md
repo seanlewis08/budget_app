@@ -36,7 +36,7 @@ Bank Accounts (Plaid API)
 | [Part 3](03-plaid-integration.md) | Plaid Integration & Account Management | Bank linking, encrypted token storage, transaction sync |
 | [Part 4](04-categorization-engine.md) | Transaction Processing & Categorization | 3-tier engine, review workflow, CSV import, seed data |
 | [Part 5](05-frontend-react.md) | Frontend & React UI | All 13+ pages, routing, charts, styles |
-| [Part 6](06-advanced-features.md) | Advanced Features | AI insights, investment tracking, background sync, sync history |
+| [Part 6](06-advanced-features.md) | Advanced Features | AI insights, investment tracking, budgets, background sync, archive import |
 | [Part 7](07-electron-and-deployment.md) | Electron Desktop App & Deployment | Native window, backend management, build & packaging |
 
 ## Tech Stack Summary

@@ -66,434 +66,746 @@
     <main class="docs-content">
       <div class="md-content">
 <h1 id="part-3-plaid-integration-account-management">Part 3 — Plaid Integration &amp; Account Management</h1>
-<p>This part covers connecting bank accounts through the Plaid API, encrypting access tokens at rest, syncing transactions incrementally, and the API endpoints that manage accounts.</p>
+<p>In Parts 1 and 2, we built the project foundation and database layer. Now we're going to connect real bank accounts. By the end of this part, the app will automatically pull transactions from your bank, encrypt sensitive tokens at rest, handle the full Plaid Link flow (including OAuth banks), sync incrementally using cursors, and run background jobs to keep your data fresh.</p>
+<p>Plaid integration is optional — the app works perfectly fine with just CSV imports. But automatic syncing is what makes this a true "set it and forget it" personal finance tool. If you don't want to set up Plaid, you can skip this part and come back later. The app degrades gracefully: if Plaid credentials aren't configured, bank syncing is simply disabled and everything else works normally.</p>
 <hr>
 <h2 id="31-how-plaid-works">3.1 How Plaid Works</h2>
-<p>Plaid is a middleware between your app and the user's bank. The flow is:</p>
-<pre><code>1. Backend creates a &quot;link token&quot; (short-lived, per-session)
-2. Frontend opens the Plaid Link widget using that token
-3. User logs into their bank inside the Plaid widget
+<p>Plaid acts as a middleman between your app and your bank. Instead of each bank having its own API (they don't), Plaid provides a single, consistent API that works with thousands of banks. Here's the full flow:</p>
+<pre><code>1. Your backend asks Plaid for a temporary &quot;link token&quot;
+2. Your frontend opens the Plaid Link widget with that token
+3. The user logs into their bank inside Plaid's secure widget
 4. Plaid returns a &quot;public token&quot; to the frontend
-5. Frontend sends the public token to the backend
-6. Backend exchanges it for a permanent &quot;access token&quot;
-7. Backend uses the access token to pull transactions
+5. The frontend sends the public token to your backend
+6. Your backend exchanges it for a permanent &quot;access token&quot;
+7. Your backend uses the access token to pull transactions
 </code></pre>
-<p>You'll need a Plaid account. The sandbox environment is free and provides test data. For real bank connections, you need a development or production plan.</p>
+<p>The key security detail: your app never sees the user's bank password. The Plaid Link widget is hosted by Plaid, and the bank credentials go directly from the user to Plaid to the bank. Your app only receives tokens — the access token is the permanent key that lets you fetch data.</p>
+<p>You'll need a Plaid account to use this. The sandbox environment is free and provides realistic test data. For real bank connections, you need a development or production plan. Sign up at <a href="https://dashboard.plaid.com">dashboard.plaid.com</a>.</p>
 <hr>
-<h2 id="32-plaid-service-backendservicesplaid_servicepy">3.2 Plaid Service (<code>backend/services/plaid_service.py</code>)</h2>
-<p>This is the largest service file (~950 lines). Here are the key components.</p>
+<h2 id="32-the-plaid-service-backendservicesplaid_servicepy">3.2 The Plaid Service (<code>backend/services/plaid_service.py</code>)</h2>
+<p>All Plaid interactions go through a single service class. This is the largest service file in the app (~960 lines) because it handles a lot: client initialization, token encryption, link token creation, token exchange, account matching, transaction syncing with deduplication, balance fetching, and investment syncing.</p>
+<p>Let's walk through each piece.</p>
 <h3 id="client-initialization">Client Initialization</h3>
-<p>The Plaid client is lazily initialized on first use, configured by environment variables:</p>
+<p>The Plaid client is lazily initialized — it's only created the first time something tries to use it. If Plaid credentials aren't configured, it returns <code>None</code> instead of crashing:</p>
 <pre><code class="language-python">import os
+import logging
+import plaid
 from plaid.api import plaid_api
 from plaid.model.products import Products
 from plaid.model.country_code import CountryCode
 from plaid import Configuration, ApiClient
+from cryptography.fernet import Fernet
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
 
 class PlaidService:
-    _client = None
+    &quot;&quot;&quot;Wraps the Plaid API client with encryption and business logic.&quot;&quot;&quot;
+
+    def __init__(self):
+        self._client: Optional[plaid_api.PlaidApi] = None
+        self._fernet: Optional[Fernet] = None
 
     @property
-    def client(self):
+    def client(self) -&gt; Optional[plaid_api.PlaidApi]:
+        &quot;&quot;&quot;Lazy-init the Plaid API client. Returns None if credentials are missing.&quot;&quot;&quot;
         if self._client is None:
-            env = os.getenv(&quot;PLAID_ENV&quot;, &quot;sandbox&quot;)
+            env = os.getenv(&quot;PLAID_ENV&quot;, &quot;sandbox&quot;).lower().strip()
             host = {
-                &quot;sandbox&quot;: &quot;https://sandbox.plaid.com&quot;,
-                &quot;development&quot;: &quot;https://development.plaid.com&quot;,
-                &quot;production&quot;: &quot;https://production.plaid.com&quot;,
-            }[env]
+                &quot;sandbox&quot;: plaid.Environment.Sandbox,
+                &quot;development&quot;: plaid.Environment.Production,
+                &quot;production&quot;: plaid.Environment.Production,
+            }.get(env, plaid.Environment.Sandbox)
 
-            # Use production secret if available and in production mode
-            secret = os.getenv(&quot;PLAID_PRODUCTION_SECRET&quot;) if env == &quot;production&quot; \
-                     else os.getenv(&quot;PLAID_SECRET&quot;)
+            # Use the correct secret for the environment
+            if env in (&quot;production&quot;, &quot;development&quot;):
+                secret = (
+                    os.getenv(&quot;PLAID_PRODUCTION_SECRET&quot;)
+                    or os.getenv(&quot;PLAID_SECRET&quot;)
+                )
+            else:
+                secret = os.getenv(&quot;PLAID_SECRET&quot;)
 
-            config = Configuration(
+            if not secret:
+                logger.warning(
+                    &quot;Plaid credentials not configured — bank syncing disabled. &quot;
+                    &quot;Add PLAID_SECRET to ~/BudgetApp/.env to enable.&quot;
+                )
+                return None
+
+            configuration = plaid.Configuration(
                 host=host,
                 api_key={
                     &quot;clientId&quot;: os.getenv(&quot;PLAID_CLIENT_ID&quot;),
                     &quot;secret&quot;: secret,
-                }
+                },
             )
-            api_client = ApiClient(config)
+            api_client = plaid.ApiClient(configuration)
             self._client = plaid_api.PlaidApi(api_client)
         return self._client
+
+    def _require_client(self):
+        &quot;&quot;&quot;Raise a clear error if Plaid is not configured.&quot;&quot;&quot;
+        if not self.client:
+            raise ValueError(
+                &quot;Plaid is not configured. Add your PLAID_CLIENT_ID and &quot;
+                &quot;PLAID_SECRET to ~/BudgetApp/.env to enable bank syncing.&quot;
+            )
 </code></pre>
+<p>The <strong>graceful degradation</strong> here is important. Instead of crashing the entire app when Plaid credentials are missing, the <code>client</code> property returns <code>None</code> and logs a warning. Any method that actually needs Plaid calls <code>_require_client()</code> first, which raises a clear error message. This means the app starts fine without Plaid credentials — CSV import, categorization, budgets, and everything else still works.</p>
+<p>Notice the environment handling: Plaid has three environments (sandbox, development, production), each with different API endpoints and secrets. The service automatically picks the right secret based on the configured environment. Development and production share a secret naming convention where the production secret takes priority.</p>
 <h3 id="token-encryption">Token Encryption</h3>
-<p>Plaid access tokens grant full access to a user's bank data, so they're encrypted at rest using Fernet (symmetric encryption from the <code>cryptography</code> library):</p>
-<pre><code class="language-python">from cryptography.fernet import Fernet
-from pathlib import Path
+<p>Plaid access tokens grant full access to a user's bank data — they can fetch transactions, balances, and account details. Storing them in plaintext in the database would be a serious security risk. If someone got a copy of your database file, they could access your bank.</p>
+<p>We solve this with Fernet symmetric encryption from Python's <code>cryptography</code> library:</p>
+<pre><code class="language-python">@property
+def fernet(self) -&gt; Fernet:
+    &quot;&quot;&quot;Lazy-init Fernet encryption. Persists key to ~/BudgetApp/.encryption_key.&quot;&quot;&quot;
+    if self._fernet is None:
+        from pathlib import Path
 
-KEY_PATH = Path.home() / &quot;BudgetApp&quot; / &quot;.encryption_key&quot;
+        key = os.getenv(&quot;PLAID_TOKEN_ENCRYPTION_KEY&quot;)
 
-def _get_or_create_key(self):
-    &quot;&quot;&quot;Load or generate the Fernet encryption key.&quot;&quot;&quot;
-    if KEY_PATH.exists():
-        return KEY_PATH.read_bytes()
-    else:
-        key = Fernet.generate_key()
-        KEY_PATH.write_bytes(key)
-        KEY_PATH.chmod(0o600)  # Owner-only read/write
-        return key
+        # If not in env, try the persistent key file
+        key_file = Path.home() / &quot;BudgetApp&quot; / &quot;.encryption_key&quot;
+        if not key and key_file.exists():
+            key = key_file.read_text().strip()
+
+        # Generate new key and persist it
+        if not key:
+            key = Fernet.generate_key().decode()
+            key_file.parent.mkdir(exist_ok=True)
+            key_file.write_text(key)
+            key_file.chmod(0o600)  # Owner-only read/write
+            logger.warning(
+                &quot;Generated new encryption key — saved to %s. &quot;
+                &quot;Existing Plaid tokens (if any) will need to be re-linked.&quot;,
+                key_file,
+            )
+
+        self._fernet = Fernet(key.encode() if isinstance(key, str) else key)
+    return self._fernet
 
 def encrypt_token(self, token: str) -&gt; str:
-    key = self._get_or_create_key()
-    f = Fernet(key)
-    return f.encrypt(token.encode()).decode()
+    &quot;&quot;&quot;Encrypt a Plaid access token for storage.&quot;&quot;&quot;
+    return self.fernet.encrypt(token.encode()).decode()
 
 def decrypt_token(self, encrypted: str) -&gt; str:
-    key = self._get_or_create_key()
-    f = Fernet(key)
-    return f.decrypt(encrypted.encode()).decode()
+    &quot;&quot;&quot;Decrypt a stored Plaid access token.&quot;&quot;&quot;
+    try:
+        return self.fernet.decrypt(encrypted.encode()).decode()
+    except Exception:
+        raise ValueError(
+            &quot;Cannot decrypt Plaid token — encryption key has changed. &quot;
+            &quot;Please disconnect and re-link this account.&quot;
+        )
 </code></pre>
-<p>The encryption key is stored at <code>~/BudgetApp/.encryption_key</code> with <code>0o600</code> permissions (owner-only). It's auto-generated on first use if missing.</p>
+<p>The encryption key is loaded from three places in priority order:</p>
+<ol>
+<li><strong>Environment variable</strong> (<code>PLAID_TOKEN_ENCRYPTION_KEY</code>) — useful for CI/CD or explicit configuration</li>
+<li><strong>Persistent key file</strong> (<code>~/BudgetApp/.encryption_key</code>) — the default for most users</li>
+<li><strong>Auto-generated</strong> — if no key exists anywhere, one is created and saved to the key file</li>
+</ol>
+<p>The key file gets <code>chmod 0o600</code> (owner read/write only), matching the convention for SSH keys and other sensitive files. If the key is ever lost or changed, existing tokens can't be decrypted — the user needs to disconnect and re-link their bank accounts. The <code>decrypt_token</code> method catches this and gives a clear error message.</p>
 <h3 id="link-token-creation">Link Token Creation</h3>
-<p>Creates a temporary link token that the frontend needs to open the Plaid Link widget:</p>
+<p>The Plaid Link widget needs a temporary token to start. This token is short-lived and tied to a specific user and set of Plaid products:</p>
 <pre><code class="language-python">from plaid.model.link_token_create_request import LinkTokenCreateRequest
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
+from plaid.model.link_token_transactions import LinkTokenTransactions
 
-def create_link_token(self):
-    request = LinkTokenCreateRequest(
-        user=LinkTokenCreateRequestUser(client_user_id=&quot;budget-app-user&quot;),
-        client_name=&quot;Budget App&quot;,
+def create_link_token(self, account_id: int, redirect_uri: Optional[str] = None) -&gt; str:
+    &quot;&quot;&quot;Create a link_token for the Plaid Link widget.&quot;&quot;&quot;
+    self._require_client()
+    kwargs = dict(
         products=[Products(&quot;transactions&quot;)],
+        client_name=&quot;Budget App&quot;,
         country_codes=[CountryCode(&quot;US&quot;)],
         language=&quot;en&quot;,
-        redirect_uri=&quot;http://localhost:5173/oauth-callback&quot;,
+        user=LinkTokenCreateRequestUser(
+            client_user_id=str(account_id),
+        ),
+        transactions=LinkTokenTransactions(
+            days_requested=730,  # Max: 2 years of historical data
+        ),
     )
-    response = self.client.link_token_create(request)
-    return response.link_token
-</code></pre>
-<p>The <code>redirect_uri</code> is needed for OAuth-based banks (banks that redirect to their own login page instead of using Plaid's in-widget login).</p>
-<h3 id="token-exchange-and-account-linking">Token Exchange and Account Linking</h3>
-<p>After the user completes the Plaid Link flow, the frontend sends the public token. The backend exchanges it for a permanent access token and links accounts:</p>
-<pre><code class="language-python">from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchangeRequest
 
-def exchange_public_token(self, account_id: int, public_token: str, db):
-    &quot;&quot;&quot;Exchange Plaid public token for access token and link the account.&quot;&quot;&quot;
-    # Exchange for permanent access token
+    if redirect_uri:
+        kwargs[&quot;redirect_uri&quot;] = redirect_uri
+
+    request = LinkTokenCreateRequest(**kwargs)
+    response = self.client.link_token_create(request)
+    return response[&quot;link_token&quot;]
+</code></pre>
+<p>The <code>days_requested=730</code> parameter tells Plaid we want up to 2 years of historical transactions on the initial sync. Without this, Plaid defaults to 90 days.</p>
+<p>The <code>redirect_uri</code> parameter is needed for OAuth-based banks (like Chase and Wells Fargo). These banks redirect the user to their own website for login instead of using Plaid's in-widget form. The redirect URI tells Plaid where to send the user back after they log in. This must match a URI configured in your Plaid dashboard.</p>
+<h3 id="token-exchange-and-account-linking">Token Exchange and Account Linking</h3>
+<p>After the user completes the Plaid Link widget, the frontend sends a temporary <code>public_token</code> to the backend. The backend exchanges it for a permanent <code>access_token</code>:</p>
+<pre><code class="language-python">def exchange_public_token(self, public_token: str, account, db: Session):
+    &quot;&quot;&quot;Exchange a public_token from Plaid Link for an access_token.&quot;&quot;&quot;
+    self._require_client()
+
     request = ItemPublicTokenExchangeRequest(public_token=public_token)
     response = self.client.item_public_token_exchange(request)
-    access_token = response.access_token
-    item_id = response.item_id
 
-    # Encrypt and store
-    account = db.query(Account).get(account_id)
-    account.plaid_access_token = self.encrypt_token(access_token)
+    access_token = response[&quot;access_token&quot;]
+    item_id = response[&quot;item_id&quot;]
+    encrypted_token = self.encrypt_token(access_token)
+
+    # Fetch Plaid accounts to match by type
+    plaid_accounts = []
+    try:
+        balance_req = AccountsBalanceGetRequest(access_token=access_token)
+        balance_resp = self.client.accounts_balance_get(balance_req)
+        plaid_accounts = balance_resp[&quot;accounts&quot;]
+    except Exception as e:
+        logger.warning(f&quot;Could not fetch initial balances: {e}&quot;)
+
+    # Link the primary account
+    account.plaid_access_token = encrypted_token
     account.plaid_item_id = item_id
     account.plaid_connection_status = &quot;connected&quot;
-
-    # Match Plaid's sub-accounts to local accounts
-    self._match_plaid_accounts(access_token, item_id, db)
-
-    db.commit()
-    return {&quot;status&quot;: &quot;linked&quot;, &quot;item_id&quot;: item_id}
 </code></pre>
-<h3 id="account-matching">Account Matching</h3>
-<p>A single Plaid "item" (one bank login) can contain multiple accounts (checking, savings, credit). The service matches them to local accounts by type:</p>
-<pre><code class="language-python">def _match_plaid_accounts(self, access_token, item_id, db):
-    &quot;&quot;&quot;Match Plaid's accounts to local Account records.&quot;&quot;&quot;
-    from plaid.model.accounts_get_request import AccountsGetRequest
-
-    response = self.client.accounts_get(
-        AccountsGetRequest(access_token=access_token)
-    )
-
-    for plaid_acct in response.accounts:
-        # Try to match by account type (checking, savings, credit)
-        local = (
+<p>After getting the access token, the service does something clever — it automatically links sibling accounts at the same institution:</p>
+<pre><code class="language-python">    # Auto-link sibling accounts at the same institution
+    siblings_linked = []
+    if plaid_accounts and account.institution:
+        siblings = (
             db.query(Account)
-            .filter(
-                Account.plaid_item_id == item_id,
-                Account.plaid_account_id.is_(None),
-            )
-            .first()
+            .filter(Account.institution == account.institution)
+            .filter(Account.id != account.id)
+            .filter(Account.plaid_connection_status != &quot;connected&quot;)
+            .all()
         )
-        if local:
-            local.plaid_account_id = plaid_acct.account_id
-            local.plaid_connection_status = &quot;connected&quot;
+        for sibling in siblings:
+            matched_sibling = self._match_plaid_account(sibling, plaid_accounts)
+            if matched_sibling:
+                if matched_sibling[&quot;account_id&quot;] != account.plaid_account_id:
+                    sibling.plaid_access_token = encrypted_token
+                    sibling.plaid_item_id = item_id
+                    sibling.plaid_account_id = matched_sibling[&quot;account_id&quot;]
+                    sibling.plaid_connection_status = &quot;connected&quot;
+                    siblings_linked.append(sibling.name)
 </code></pre>
-<h3 id="transaction-sync">Transaction Sync</h3>
-<p>The core sync method uses Plaid's cursor-based pagination to fetch only new/modified/removed transactions since the last sync:</p>
-<pre><code class="language-python">from plaid.model.transactions_sync_request import TransactionsSyncRequest
+<p>This means that when you log into SoFi (which has both Checking and Savings), connecting one account automatically connects the other. The user doesn't need to go through the Plaid Link flow twice for the same bank.</p>
+<p>The account matching logic uses the account type as the primary signal — it maps our types ("checking", "savings", "credit") to Plaid's types ("depository", "credit") and subtypes ("checking", "savings", "credit card"):</p>
+<pre><code class="language-python">def _match_plaid_account(self, account, plaid_accounts):
+    &quot;&quot;&quot;Match our Account to the right Plaid account by type.&quot;&quot;&quot;
+    type_map = {
+        &quot;checking&quot;: &quot;depository&quot;,
+        &quot;savings&quot;: &quot;depository&quot;,
+        &quot;credit&quot;: &quot;credit&quot;,
+    }
+    subtype_map = {
+        &quot;checking&quot;: &quot;checking&quot;,
+        &quot;savings&quot;: &quot;savings&quot;,
+        &quot;credit&quot;: &quot;credit card&quot;,
+    }
 
-def sync_transactions(self, account, db, trigger=&quot;manual&quot;):
-    &quot;&quot;&quot;Incremental transaction sync using Plaid's cursor-based API.&quot;&quot;&quot;
-    start_time = datetime.utcnow()
+    expected_type = type_map.get(account.account_type)
+    expected_subtype = subtype_map.get(account.account_type)
+
+    # First pass: match both type AND subtype
+    for pa in plaid_accounts:
+        if (str(pa.get(&quot;type&quot;)) == expected_type and
+                str(pa.get(&quot;subtype&quot;)) == expected_subtype):
+            return pa
+
+    # Second pass: match just type
+    for pa in plaid_accounts:
+        if str(pa.get(&quot;type&quot;)) == expected_type:
+            return pa
+
+    # Fallback: first account
+    return plaid_accounts[0] if plaid_accounts else None
+</code></pre>
+<hr>
+<h2 id="33-transaction-sync-the-heart-of-the-service">3.3 Transaction Sync — The Heart of the Service</h2>
+<p>This is the most complex method in the entire app. It handles incremental syncing, deduplication across multiple sources, pending-to-posted transitions, and automatic categorization.</p>
+<h3 id="cursor-based-pagination">Cursor-Based Pagination</h3>
+<p>Plaid's transaction sync API uses cursors instead of date ranges. You pass your last cursor, and Plaid returns everything that's changed since then — new transactions, modified transactions, and removed transactions. This is much more efficient than re-downloading everything each time.</p>
+<pre><code class="language-python">def sync_transactions(self, account, db, _retry_count=0, trigger=&quot;manual&quot;):
+    &quot;&quot;&quot;Cursor-based transaction sync for one account.&quot;&quot;&quot;
+    self._require_client()
+    from ..models import Transaction, SyncLog
+    from .categorize import categorize_transaction
+
+    sync_start = time.time()
     access_token = self.decrypt_token(account.plaid_access_token)
     cursor = account.plaid_cursor or &quot;&quot;
 
     added_count = 0
     modified_count = 0
     removed_count = 0
+    has_more = True
 
-    try:
-        has_more = True
-        while has_more:
-            request = TransactionsSyncRequest(
-                access_token=access_token,
-                cursor=cursor,
-            )
+    while has_more:
+        request = TransactionsSyncRequest(
+            access_token=access_token,
+            cursor=cursor,
+            options=TransactionsSyncRequestOptions(
+                include_original_description=True,
+                account_id=account.plaid_account_id,
+            ),
+        )
+
+        try:
             response = self.client.transactions_sync(request)
+        except plaid.ApiException as e:
+            # Handle mutation-during-pagination by resetting cursor
+            if &quot;TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION&quot; in str(e.body):
+                if _retry_count &lt; 3:
+                    account.plaid_cursor = &quot;&quot;
+                    db.commit()
+                    return self.sync_transactions(
+                        account, db, _retry_count=_retry_count + 1, trigger=&quot;retry&quot;
+                    )
+            raise
 
-            # Process added transactions
-            for txn in response.added:
-                if txn.pending:
-                    continue  # Skip pending transactions
+        # Process added, modified, removed transactions
+        for txn_data in response.get(&quot;added&quot;, []):
+            result = self._upsert_transaction(txn_data, account, db, is_new=True)
+            if result:
+                added_count += result
 
-                # Deduplicate by plaid_transaction_id
+        for txn_data in response.get(&quot;modified&quot;, []):
+            result = self._upsert_transaction(txn_data, account, db, is_new=False)
+            if result:
+                modified_count += result
+
+        for removed in response.get(&quot;removed&quot;, []):
+            txn_id = removed.get(&quot;transaction_id&quot;)
+            if txn_id:
                 existing = db.query(Transaction).filter(
-                    Transaction.plaid_transaction_id == txn.transaction_id
-                ).first()
-                if existing:
-                    continue
-
-                new_txn = Transaction(
-                    account_id=account.id,
-                    plaid_transaction_id=txn.transaction_id,
-                    date=txn.date,
-                    description=txn.name,
-                    merchant_name=txn.merchant_name or txn.name,
-                    amount=txn.amount,  # Plaid: positive = expense
-                    source=&quot;plaid&quot;,
-                    status=&quot;pending_review&quot;,
-                )
-                db.add(new_txn)
-                db.flush()
-
-                # Auto-categorize
-                categorize_transaction(new_txn, db)
-                added_count += 1
-
-            # Process modified transactions
-            for txn in response.modified:
-                existing = db.query(Transaction).filter(
-                    Transaction.plaid_transaction_id == txn.transaction_id
-                ).first()
-                if existing:
-                    existing.amount = txn.amount
-                    existing.description = txn.name
-                    existing.merchant_name = txn.merchant_name or txn.name
-                    modified_count += 1
-
-            # Process removed transactions
-            for txn in response.removed:
-                existing = db.query(Transaction).filter(
-                    Transaction.plaid_transaction_id == txn.transaction_id
+                    Transaction.plaid_transaction_id == txn_id
                 ).first()
                 if existing:
                     db.delete(existing)
                     removed_count += 1
 
-            cursor = response.next_cursor
-            has_more = response.has_more
-
-        # Update account state
+        # Save cursor progress after each page
+        cursor = response[&quot;next_cursor&quot;]
         account.plaid_cursor = cursor
-        account.last_synced_at = datetime.utcnow()
-        account.last_sync_error = None
-
-        # Log the sync
-        duration = (datetime.utcnow() - start_time).total_seconds()
-        sync_log = SyncLog(
-            account_id=account.id,
-            trigger=trigger,
-            status=&quot;success&quot;,
-            added=added_count,
-            modified=modified_count,
-            removed=removed_count,
-            duration_seconds=duration,
-        )
-        db.add(sync_log)
         db.commit()
 
-        return {
-            &quot;added&quot;: added_count,
-            &quot;modified&quot;: modified_count,
-            &quot;removed&quot;: removed_count,
-        }
-
-    except Exception as e:
-        # Log the failure
-        sync_log = SyncLog(
-            account_id=account.id,
-            trigger=trigger,
-            status=&quot;error&quot;,
-            error_message=str(e),
-            duration_seconds=(datetime.utcnow() - start_time).total_seconds(),
-        )
-        db.add(sync_log)
-        db.commit()
-        raise
+        has_more = response.get(&quot;has_more&quot;, False)
 </code></pre>
-<p>Key details:</p>
-<ul>
-<li><strong>Cursor-based pagination</strong>: Plaid maintains a cursor that tracks your last sync position. Each call returns only what's changed since that cursor, making syncs fast and bandwidth-efficient.</li>
-<li><strong>Pending transactions skipped</strong>: Plaid marks transactions as "pending" before they clear. We skip these to avoid duplicates (they reappear as non-pending later).</li>
-<li><strong>Deduplication</strong>: The <code>plaid_transaction_id</code> unique constraint prevents duplicate imports.</li>
-<li><strong>Auto-categorization</strong>: Each new transaction is immediately run through the 3-tier categorization engine (covered in Part 4).</li>
-<li><strong>Mutation retry</strong>: Plaid sometimes returns <code>TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION</code> errors. The service retries up to 3 times with the cursor reset.</li>
-<li><strong>SyncLog</strong>: Every sync attempt (success or failure) is recorded in the <code>sync_log</code> table for the audit trail.</li>
-</ul>
-<hr>
-<h2 id="33-accounts-router-backendroutersaccountspy">3.3 Accounts Router (<code>backend/routers/accounts.py</code>)</h2>
-<p>The accounts API handles listing accounts, the Plaid Link flow, manual syncing, and sync history.</p>
-<h3 id="listing-accounts">Listing Accounts</h3>
-<pre><code class="language-python">@router.get(&quot;&quot;)
-def list_accounts(db: Session = Depends(get_db)):
-    accounts = db.query(Account).all()
-    result = []
-    for acct in accounts:
-        txn_count = db.query(Transaction).filter(
-            Transaction.account_id == acct.id
-        ).count()
-        # Get date range coverage
-        earliest = db.query(func.min(Transaction.date)).filter(
-            Transaction.account_id == acct.id
-        ).scalar()
-        latest = db.query(func.max(Transaction.date)).filter(
-            Transaction.account_id == acct.id
-        ).scalar()
-        result.append({
-            &quot;id&quot;: acct.id,
-            &quot;name&quot;: acct.name,
-            &quot;institution&quot;: acct.institution,
-            &quot;account_type&quot;: acct.account_type,
-            &quot;plaid_connection_status&quot;: acct.plaid_connection_status,
-            &quot;last_synced_at&quot;: acct.last_synced_at,
-            &quot;balance_current&quot;: acct.balance_current,
-            &quot;transaction_count&quot;: txn_count,
-            &quot;earliest_date&quot;: str(earliest) if earliest else None,
-            &quot;latest_date&quot;: str(latest) if latest else None,
-        })
-    return result
+<p>A few important details here:</p>
+<p><strong>Committing after each page</strong> (not just at the end) serves two purposes. First, it releases the SQLite write lock between pages, so the UI can still read data during a long sync. Second, it saves cursor progress — if the sync fails halfway through, the next attempt picks up where it left off instead of re-downloading everything.</p>
+<p><strong>The mutation retry</strong> handles a specific Plaid error: <code>TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION</code>. This happens when Plaid's data changes while you're paginating through it. The fix is to reset the cursor and start over. We retry up to 3 times before giving up.</p>
+<p><strong>The <code>include_original_description</code> option</strong> tells Plaid to include the raw bank description alongside its cleaned-up name. We prefer the raw description because it's what the categorization engine trains on — bank-specific formats like "STARBUCKS #12345 SAN FRANCISCO CA" contain patterns that help with matching.</p>
+<p><strong>The <code>account_id</code> filter</strong> tells Plaid to only return transactions for one specific account. Without this, a single Plaid item (bank login) would return transactions for all accounts at that bank, and we'd need to sort them ourselves.</p>
+<h3 id="the-upsert-logic">The Upsert Logic</h3>
+<p>The <code>_upsert_transaction</code> method handles the tricky part — figuring out whether a Plaid transaction is new, a duplicate, or an update to something we already have:</p>
+<pre><code class="language-python">def _upsert_transaction(self, txn_data, account, db, is_new):
+    &quot;&quot;&quot;Insert or update a single Plaid transaction.&quot;&quot;&quot;
+    from ..models import Transaction
+    from .categorize import categorize_transaction
+
+    plaid_txn_id = txn_data.get(&quot;transaction_id&quot;)
+
+    # Skip transactions belonging to a different account
+    txn_plaid_account_id = txn_data.get(&quot;account_id&quot;)
+    if account.plaid_account_id and txn_plaid_account_id:
+        if txn_plaid_account_id != account.plaid_account_id:
+            return 0
+
+    # Parse transaction data
+    txn_date = txn_data.get(&quot;date&quot;)
+    original_desc = txn_data.get(&quot;original_description&quot;)
+    plaid_name = txn_data.get(&quot;name&quot;, &quot;&quot;)
+    description = original_desc or plaid_name
+    merchant_name = txn_data.get(&quot;merchant_name&quot;) or plaid_name
+    amount = float(txn_data.get(&quot;amount&quot;, 0))
 </code></pre>
-<h3 id="plaid-link-flow">Plaid Link Flow</h3>
-<p>Two endpoints handle the Plaid Link widget flow:</p>
-<pre><code class="language-python">@router.post(&quot;/link/create&quot;)
-def create_link_token(db: Session = Depends(get_db)):
-    &quot;&quot;&quot;Create a Plaid Link token for the frontend widget.&quot;&quot;&quot;
-    plaid = PlaidService()
-    link_token = plaid.create_link_token()
-    return {&quot;link_token&quot;: link_token}
-
-
-@router.post(&quot;/link/exchange&quot;)
-def exchange_public_token(body: dict, db: Session = Depends(get_db)):
-    &quot;&quot;&quot;Exchange the public token from Plaid Link for an access token.&quot;&quot;&quot;
-    plaid = PlaidService()
-    result = plaid.exchange_public_token(
-        account_id=body[&quot;account_id&quot;],
-        public_token=body[&quot;public_token&quot;],
-        db=db,
-    )
-    return result
+<p>The method checks for matches in four layers, in priority order:</p>
+<p><strong>Layer 1 — Existing Plaid transaction</strong> (same <code>transaction_id</code>): Update amount, date, and pending status. Never overwrite user-confirmed categories.</p>
+<p><strong>Layer 2 — Pending-to-posted transition</strong>: When a pending transaction clears, Plaid sends it as a new transaction with a <code>pending_transaction_id</code> pointing to the old pending record. We find the old record and upgrade it.</p>
+<p><strong>Layer 3 — Cross-source dedup</strong> (Plaid vs archive import): If you imported historical data from CSV and then connected Plaid, the same transaction would exist twice. We match by account + date (±2 days) + amount and merge them, keeping the existing category assignment.</p>
+<p><strong>Layer 4 — Same-account dedup</strong>: After a cursor reset, Plaid may re-send transactions we already have under different transaction IDs. We catch these by matching on account + date + amount.</p>
+<p><strong>Layer 5 — Brand new transaction</strong>: No match found anywhere. Create a new record and run it through the categorization engine.</p>
+<p>This layered dedup approach means the app handles all sorts of real-world scenarios: pending transactions that clear days later, CSV-imported data that overlaps with Plaid data, and cursor resets that re-send old transactions.</p>
+<h3 id="protecting-user-decisions">Protecting User Decisions</h3>
+<p>Throughout the upsert logic, there's a consistent pattern:</p>
+<pre><code class="language-python">if existing.status not in (&quot;confirmed&quot;, &quot;pending_save&quot;):
+    existing.description = description
+    existing.merchant_name = merchant_name
 </code></pre>
-<h3 id="sync-endpoints">Sync Endpoints</h3>
-<pre><code class="language-python">@router.post(&quot;/{account_id}/sync&quot;)
-def sync_account(account_id: int, db: Session = Depends(get_db)):
-    &quot;&quot;&quot;Manually trigger a transaction sync for one account.&quot;&quot;&quot;
-    account = db.query(Account).get(account_id)
-    if not account or account.plaid_connection_status != &quot;connected&quot;:
-        raise HTTPException(status_code=400, detail=&quot;Account not connected&quot;)
-
-    plaid = PlaidService()
-    result = plaid.sync_transactions(account, db, trigger=&quot;manual&quot;)
-    return result
-
-
-@router.post(&quot;/sync-all&quot;)
-def sync_all_accounts(db: Session = Depends(get_db)):
-    &quot;&quot;&quot;Sync all connected accounts at once.&quot;&quot;&quot;
-    accounts = db.query(Account).filter(
-        Account.plaid_connection_status == &quot;connected&quot;
-    ).all()
-
-    plaid = PlaidService()
-    results = {}
-    for account in accounts:
-        try:
-            results[account.name] = plaid.sync_transactions(
-                account, db, trigger=&quot;manual&quot;
-            )
-        except Exception as e:
-            results[account.name] = {&quot;error&quot;: str(e)}
-    return results
-</code></pre>
-<h3 id="sync-history">Sync History</h3>
-<blockquote>
-<p><strong>Important</strong>: This endpoint uses a literal path <code>/sync-history</code>. It MUST be defined before any parameterized path like <code>/{account_id}</code>, otherwise FastAPI will try to parse <code>"sync-history"</code> as an integer account ID.</p>
-</blockquote>
-<pre><code class="language-python"># NOTE: Literal paths MUST be defined before parameterised paths
-# so FastAPI matches them first.
-
-@router.get(&quot;/sync-history&quot;)
-def get_sync_history(
-    account_id: int = None,
-    limit: int = 50,
-    db: Session = Depends(get_db),
-):
-    &quot;&quot;&quot;Return recent sync log entries.&quot;&quot;&quot;
-    query = db.query(SyncLog).order_by(SyncLog.started_at.desc())
-    if account_id:
-        query = query.filter(SyncLog.account_id == account_id)
-    logs = query.limit(limit).all()
-    return [
-        {
-            &quot;id&quot;: log.id,
-            &quot;account_id&quot;: log.account_id,
-            &quot;account_name&quot;: log.account.name if log.account else &quot;Unknown&quot;,
-            &quot;trigger&quot;: log.trigger,
-            &quot;status&quot;: log.status,
-            &quot;added&quot;: log.added,
-            &quot;modified&quot;: log.modified,
-            &quot;removed&quot;: log.removed,
-            &quot;error_message&quot;: log.error_message,
-            &quot;duration_seconds&quot;: log.duration_seconds,
-            &quot;started_at&quot;: log.started_at.isoformat() if log.started_at else None,
-        }
-        for log in logs
-    ]
-</code></pre>
-<h3 id="disconnect">Disconnect</h3>
-<p>Disconnects an account from Plaid while preserving all transaction data:</p>
-<pre><code class="language-python">@router.post(&quot;/{account_id}/disconnect&quot;)
-def disconnect_account(account_id: int, db: Session = Depends(get_db)):
-    account = db.query(Account).get(account_id)
-    if not account:
-        raise HTTPException(status_code=404)
-
-    account.plaid_connection_status = &quot;disconnected&quot;
-    account.plaid_access_token = None
-    account.plaid_cursor = None
-    account.plaid_item_id = None
-    account.plaid_account_id = None
-    db.commit()
-    return {&quot;status&quot;: &quot;disconnected&quot;}
-</code></pre>
+<p>This check appears everywhere a Plaid update might overwrite existing data. If the user has confirmed a category or staged a change, we never overwrite their description or merchant name. This preserves manual edits — if you renamed "STARBUCKS #12345 SAN FRANCISCO CA" to "Coffee with Mom," that edit survives future syncs.</p>
 <hr>
 <h2 id="34-balance-fetching">3.4 Balance Fetching</h2>
-<p>The service also fetches current account balances from Plaid:</p>
-<pre><code class="language-python">def fetch_balances(self, account, db):
-    &quot;&quot;&quot;Fetch current balances from Plaid.&quot;&quot;&quot;
+<p>Separately from transaction syncing, the service can fetch current account balances:</p>
+<pre><code class="language-python">def get_account_balances(self, account, db):
+    &quot;&quot;&quot;Fetch current balances from Plaid and store on the Account.&quot;&quot;&quot;
     access_token = self.decrypt_token(account.plaid_access_token)
-    response = self.client.accounts_get(
-        AccountsGetRequest(access_token=access_token)
-    )
 
-    for plaid_acct in response.accounts:
-        if plaid_acct.account_id == account.plaid_account_id:
-            account.balance_current = plaid_acct.balances.current
-            account.balance_available = plaid_acct.balances.available
-            account.balance_limit = plaid_acct.balances.limit
+    request = AccountsBalanceGetRequest(access_token=access_token)
+    response = self.client.accounts_balance_get(request)
+
+    for pa in response[&quot;accounts&quot;]:
+        if pa[&quot;account_id&quot;] == account.plaid_account_id:
+            account.balance_current = pa[&quot;balances&quot;][&quot;current&quot;]
+            account.balance_available = pa[&quot;balances&quot;].get(&quot;available&quot;)
+            account.balance_limit = pa[&quot;balances&quot;].get(&quot;limit&quot;)
             account.balance_updated_at = datetime.utcnow()
             break
 
     db.commit()
 </code></pre>
+<p>This is a separate API call from transaction sync because balances can change independently (e.g., a direct deposit hitting your account before the transaction appears). The Accounts page has a "Refresh Balances" button that calls this directly.</p>
 <hr>
-<h2 id="35-oauth-callback-handling">3.5 OAuth Callback Handling</h2>
-<p>Some banks (like Chase, Wells Fargo) use OAuth instead of Plaid's in-widget login. For these, Plaid redirects the user to the bank's website, then back to your app. The frontend handles this redirect:</p>
-<pre><code class="language-jsx">// frontend/src/App.jsx — OAuthCallback component
+<h2 id="35-investment-syncing">3.5 Investment Syncing</h2>
+<p>The service also handles investment accounts — brokerage accounts, IRAs, 401(k)s. This uses a different Plaid product (<code>investments</code> instead of <code>transactions</code>) and stores data in the separate investments database.</p>
+<h3 id="holdings-sync">Holdings Sync</h3>
+<pre><code class="language-python">def sync_investment_holdings(self, access_token_encrypted, inv_account, inv_db):
+    &quot;&quot;&quot;Fetch holdings + securities from Plaid and upsert into investments DB.&quot;&quot;&quot;
+    self._require_client()
+    from ..models_investments import Security, Holding
+
+    access_token = self.decrypt_token(access_token_encrypted)
+    request = InvestmentsHoldingsGetRequest(access_token=access_token)
+    response = self.client.investments_holdings_get(request)
+
+    today = date.today()
+
+    # 1. Upsert securities (stocks, ETFs, mutual funds)
+    security_map = {}
+    for ps in response.get(&quot;securities&quot;, []):
+        plaid_sec_id = ps.get(&quot;security_id&quot;)
+        existing = inv_db.query(Security).filter(
+            Security.plaid_security_id == plaid_sec_id
+        ).first()
+
+        if existing:
+            # Update price and name
+            existing.name = ps.get(&quot;name&quot;) or existing.name
+            if ps.get(&quot;close_price&quot;) is not None:
+                existing.close_price = float(ps[&quot;close_price&quot;])
+                existing.close_price_as_of = datetime.utcnow()
+                existing.price_source = &quot;plaid&quot;
+            security_map[plaid_sec_id] = existing
+        else:
+            # Create new security record
+            sec = Security(
+                plaid_security_id=plaid_sec_id,
+                ticker=ps.get(&quot;ticker_symbol&quot;),
+                name=ps.get(&quot;name&quot;) or ps.get(&quot;ticker_symbol&quot;) or &quot;Unknown&quot;,
+                security_type=str(ps.get(&quot;type&quot;, &quot;&quot;)).lower() or &quot;stock&quot;,
+                close_price=float(ps[&quot;close_price&quot;]) if ps.get(&quot;close_price&quot;) else None,
+                close_price_as_of=datetime.utcnow() if ps.get(&quot;close_price&quot;) else None,
+                price_source=&quot;plaid&quot; if ps.get(&quot;close_price&quot;) else None,
+            )
+            inv_db.add(sec)
+            inv_db.flush()
+            security_map[plaid_sec_id] = sec
+
+    # 2. Upsert holdings (daily snapshot)
+    for ph in response.get(&quot;holdings&quot;, []):
+        # Filter to this account
+        if inv_account.plaid_account_id and ph.get(&quot;account_id&quot;) != inv_account.plaid_account_id:
+            continue
+
+        security = security_map.get(ph.get(&quot;security_id&quot;))
+        if not security:
+            continue
+
+        # Upsert today's snapshot
+        existing = inv_db.query(Holding).filter(
+            Holding.investment_account_id == inv_account.id,
+            Holding.security_id == security.id,
+            Holding.as_of_date == today,
+        ).first()
+
+        quantity = float(ph.get(&quot;quantity&quot;, 0))
+        cost_basis = float(ph[&quot;cost_basis&quot;]) if ph.get(&quot;cost_basis&quot;) else None
+
+        if existing:
+            existing.quantity = quantity
+            existing.cost_basis = cost_basis
+            existing.current_value = float(ph[&quot;institution_value&quot;]) if ph.get(&quot;institution_value&quot;) else None
+        else:
+            holding = Holding(
+                investment_account_id=inv_account.id,
+                security_id=security.id,
+                quantity=quantity,
+                cost_basis=cost_basis,
+                cost_basis_per_unit=cost_basis / quantity if cost_basis and quantity &gt; 0 else None,
+                current_value=float(ph[&quot;institution_value&quot;]) if ph.get(&quot;institution_value&quot;) else None,
+                as_of_date=today,
+            )
+            inv_db.add(holding)
+
+    inv_db.commit()
+</code></pre>
+<p>The holding sync creates daily snapshots — one row per security per account per day. This accumulation of snapshots over time enables portfolio performance charts.</p>
+<h3 id="investment-transactions-sync">Investment Transactions Sync</h3>
+<p>Investment transactions (buys, sells, dividends, transfers) use offset-based pagination instead of cursors:</p>
+<pre><code class="language-python">def sync_investment_transactions(self, access_token_encrypted, inv_account, inv_db,
+                                  start_date=None, end_date=None):
+    &quot;&quot;&quot;Fetch investment transactions from Plaid.&quot;&quot;&quot;
+    # Defaults to 2 years of history
+    if not start_date:
+        start_date = date.today() - timedelta(days=730)
+    if not end_date:
+        end_date = date.today()
+
+    offset = 0
+    while True:
+        request = InvestmentsTransactionsGetRequest(
+            access_token=access_token,
+            start_date=start_date,
+            end_date=end_date,
+            options={&quot;offset&quot;: offset, &quot;count&quot;: 100},
+        )
+        response = self.client.investments_transactions_get(request)
+
+        for txn_data in response.get(&quot;investment_transactions&quot;, []):
+            # Dedup by plaid_investment_transaction_id
+            # Map Plaid subtypes to simpler types (buy, sell, dividend, etc.)
+            # Create InvestmentTransaction records
+            ...
+
+        offset += len(response.get(&quot;investment_transactions&quot;, []))
+        if offset &gt;= response.get(&quot;total_investment_transactions&quot;, 0):
+            break
+
+    inv_db.commit()
+</code></pre>
+<p>The service maps Plaid's granular subtypes (like "qualified dividend", "non-qualified dividend", "dividend reinvestment") to simpler categories that make sense for display: <code>buy</code>, <code>sell</code>, <code>dividend</code>, <code>dividend_reinvestment</code>, <code>capital_gain</code>, <code>transfer</code>, and <code>fee</code>.</p>
+<hr>
+<h2 id="36-the-accounts-api-backendroutersaccountspy">3.6 The Accounts API (<code>backend/routers/accounts.py</code>)</h2>
+<p>The accounts router exposes all account management as REST endpoints. Let's walk through the key ones.</p>
+<h3 id="listing-accounts">Listing Accounts</h3>
+<pre><code class="language-python">@router.get(&quot;/&quot;, response_model=list[AccountOut])
+def list_accounts(db: Session = Depends(get_db)):
+    &quot;&quot;&quot;List all bank accounts with connection status, balances, and date coverage.&quot;&quot;&quot;
+    accounts = db.query(Account).order_by(Account.institution, Account.name).all()
+
+    # Fetch date range stats for all accounts in one query
+    date_stats = (
+        db.query(
+            Transaction.account_id,
+            func.min(Transaction.date).label(&quot;earliest&quot;),
+            func.max(Transaction.date).label(&quot;latest&quot;),
+            func.count(Transaction.id).label(&quot;count&quot;),
+        )
+        .group_by(Transaction.account_id)
+        .all()
+    )
+    stats_map = {s.account_id: s for s in date_stats}
+
+    results = []
+    for acct in accounts:
+        out = AccountOut.model_validate(acct)
+        stats = stats_map.get(acct.id)
+        if stats:
+            out.earliest_transaction = stats.earliest
+            out.latest_transaction = stats.latest
+            out.transaction_count = stats.count
+        results.append(out)
+
+    return results
+</code></pre>
+<p>This endpoint gathers date range statistics in a single SQL query using <code>GROUP BY</code> instead of querying per-account. This is an important optimization — if you have 4 accounts with thousands of transactions each, you don't want 4 separate count queries.</p>
+<h3 id="the-plaid-link-flow">The Plaid Link Flow</h3>
+<p>Two endpoints handle the frontend widget:</p>
+<pre><code class="language-python">@router.post(&quot;/link/token&quot;)
+def create_link_token(req: LinkTokenRequest, db: Session = Depends(get_db)):
+    &quot;&quot;&quot;Create a Plaid Link token for the frontend widget.&quot;&quot;&quot;
+    from ..services.plaid_service import plaid_service
+
+    account = db.query(Account).get(req.account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail=&quot;Account not found&quot;)
+
+    link_token = plaid_service.create_link_token(
+        account.id, redirect_uri=req.redirect_uri
+    )
+    return {&quot;link_token&quot;: link_token}
+
+
+@router.post(&quot;/link/exchange&quot;)
+def exchange_public_token(req: LinkExchangeRequest, db: Session = Depends(get_db)):
+    &quot;&quot;&quot;Exchange the public_token from Plaid Link for an access_token.&quot;&quot;&quot;
+    from ..services.plaid_service import plaid_service
+
+    account = db.query(Account).get(req.account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail=&quot;Account not found&quot;)
+
+    result = plaid_service.exchange_public_token(req.public_token, account, db)
+
+    # Trigger first sync for the primary account
+    try:
+        sync_result = plaid_service.sync_transactions(account, db, trigger=&quot;initial&quot;)
+        result[&quot;sync&quot;] = sync_result
+    except Exception as sync_err:
+        result[&quot;sync_error&quot;] = str(sync_err)
+
+    # Also sync any auto-linked sibling accounts
+    if result.get(&quot;siblings_linked&quot;):
+        siblings = db.query(Account).filter(
+            Account.institution == account.institution,
+            Account.id != account.id,
+            Account.plaid_connection_status == &quot;connected&quot;,
+        ).all()
+        for sibling in siblings:
+            try:
+                plaid_service.sync_transactions(sibling, db, trigger=&quot;initial&quot;)
+            except Exception:
+                pass
+
+    return result
+</code></pre>
+<p>The exchange endpoint does three things in sequence: exchanges the token, triggers an initial sync for the primary account, and syncs any sibling accounts that were auto-linked. This means the user connects their bank and immediately sees their transactions — no waiting for the next scheduled sync.</p>
+<h3 id="manual-sync-and-sync-all">Manual Sync and Sync-All</h3>
+<pre><code class="language-python">@router.post(&quot;/{account_id}/sync&quot;, response_model=SyncResult)
+def sync_account(account_id: int, db: Session = Depends(get_db)):
+    &quot;&quot;&quot;Manually trigger a transaction sync for one account.&quot;&quot;&quot;
+    from ..services.plaid_service import plaid_service
+
+    account = db.query(Account).get(account_id)
+    if not account or account.plaid_connection_status != &quot;connected&quot;:
+        raise HTTPException(status_code=400, detail=&quot;Account not connected&quot;)
+
+    result = plaid_service.sync_transactions(account, db, trigger=&quot;manual&quot;)
+    return result
+
+
+@router.post(&quot;/sync-all&quot;)
+def sync_all_accounts(db: Session = Depends(get_db)):
+    &quot;&quot;&quot;Sync all connected accounts. Used by the scheduler and 'Sync All' button.&quot;&quot;&quot;
+    from ..services.plaid_service import plaid_service
+
+    accounts = db.query(Account).filter(
+        Account.plaid_connection_status == &quot;connected&quot;
+    ).all()
+
+    results = {}
+    for account in accounts:
+        try:
+            result = plaid_service.sync_transactions(account, db, trigger=&quot;manual&quot;)
+            results[account.name] = {&quot;status&quot;: &quot;ok&quot;, **result}
+        except Exception as e:
+            results[account.name] = {&quot;status&quot;: &quot;error&quot;, &quot;error&quot;: str(e)}
+
+    return {&quot;accounts&quot;: results}
+</code></pre>
+<h3 id="sync-history">Sync History</h3>
+<pre><code class="language-python"># NOTE: Literal paths (/sync-history) MUST be defined before
+#       parameterised paths (/{account_id}) so FastAPI matches them first.
+
+@router.get(&quot;/sync-history&quot;)
+def get_sync_history(account_id: int = None, limit: int = 50, db: Session = Depends(get_db)):
+    &quot;&quot;&quot;Return recent sync log entries for all or a specific account.&quot;&quot;&quot;
+    from ..models import SyncLog
+
+    query = db.query(SyncLog).order_by(SyncLog.started_at.desc())
+    if account_id:
+        query = query.filter(SyncLog.account_id == account_id)
+    return query.limit(limit).all()
+</code></pre>
+<p>The comment about route ordering is a real gotcha in FastAPI. If <code>/{account_id}</code> is defined before <code>/sync-history</code>, FastAPI will try to parse <code>"sync-history"</code> as an integer and return a 422 error. Literal path segments must always come before parameterized ones.</p>
+<h3 id="disconnect-and-delete">Disconnect and Delete</h3>
+<pre><code class="language-python">@router.post(&quot;/{account_id}/disconnect&quot;)
+def disconnect_account(account_id: int, db: Session = Depends(get_db)):
+    &quot;&quot;&quot;Disconnect a Plaid-linked account. Preserves all transaction data.&quot;&quot;&quot;
+    account = db.query(Account).get(account_id)
+    account.plaid_access_token = None
+    account.plaid_item_id = None
+    account.plaid_cursor = None
+    account.plaid_account_id = None
+    account.plaid_connection_status = &quot;disconnected&quot;
+    # Clear balance data too
+    account.balance_current = None
+    account.balance_available = None
+    account.balance_limit = None
+    db.commit()
+    return {&quot;status&quot;: &quot;disconnected&quot;}
+
+
+@router.delete(&quot;/{account_id}&quot;)
+def delete_account(account_id: int, db: Session = Depends(get_db)):
+    &quot;&quot;&quot;Permanently remove an account and all its transactions.&quot;&quot;&quot;
+    from ..models import SyncLog
+
+    account = db.query(Account).get(account_id)
+    txn_count = db.query(Transaction).filter(Transaction.account_id == account_id).delete()
+    log_count = db.query(SyncLog).filter(SyncLog.account_id == account_id).delete()
+    db.delete(account)
+    db.commit()
+    return {&quot;status&quot;: &quot;deleted&quot;, &quot;transactions_removed&quot;: txn_count}
+</code></pre>
+<p>Disconnect preserves all transaction data but removes the Plaid connection — useful if your bank credentials expire and you want to re-link without losing history. Delete is permanent — it removes the account and all associated transactions and sync logs.</p>
+<hr>
+<h2 id="37-the-background-scheduler-backendservicessync_schedulerpy">3.7 The Background Scheduler (<code>backend/services/sync_scheduler.py</code>)</h2>
+<p>The scheduler keeps your data fresh automatically using APScheduler. It runs three background jobs:</p>
+<pre><code class="language-python">from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
+
+scheduler = BackgroundScheduler()
+
+def start_scheduler():
+    &quot;&quot;&quot;Start the background sync scheduler.&quot;&quot;&quot;
+    if scheduler.running:
+        return
+
+    # Bank transaction sync — every 4 hours
+    scheduler.add_job(
+        sync_all_accounts_job,
+        trigger=IntervalTrigger(hours=4),
+        id=&quot;plaid_sync_all&quot;,
+        replace_existing=True,
+    )
+
+    # Investment holdings + transactions — every 6 hours
+    scheduler.add_job(
+        sync_investments_job,
+        trigger=IntervalTrigger(hours=6),
+        id=&quot;investment_sync&quot;,
+        replace_existing=True,
+    )
+
+    # Stock price refresh — every 30 minutes during market hours
+    scheduler.add_job(
+        fetch_prices_job,
+        trigger=CronTrigger(
+            day_of_week=&quot;mon-fri&quot;,
+            hour=&quot;9-16&quot;,
+            minute=&quot;0,30&quot;,
+            timezone=&quot;US/Eastern&quot;,
+        ),
+        id=&quot;price_refresh&quot;,
+        replace_existing=True,
+    )
+
+    scheduler.start()
+</code></pre>
+<p><strong>Transaction sync every 4 hours</strong> balances freshness with API rate limits. Plaid's sandbox doesn't have rate limits, but production does — 4 hours is a safe interval.</p>
+<p><strong>Investment sync every 6 hours</strong> is less frequent because portfolio positions change less often than bank transactions.</p>
+<p><strong>Price refresh every 30 minutes during market hours</strong> uses a cron trigger that only fires on weekdays between 9:30 AM and 4:30 PM Eastern. This uses Yahoo Finance (<code>yfinance</code>) to get real-time stock prices — covered in Part 6.</p>
+<p>Each job wraps its Plaid calls in try/except so that a failure for one account doesn't stop the sync for other accounts, and a missing-credentials error doesn't crash the scheduler:</p>
+<pre><code class="language-python">def sync_all_accounts_job():
+    &quot;&quot;&quot;Background job: sync all connected bank accounts.&quot;&quot;&quot;
+    db = SessionLocal()
+    try:
+        accounts = db.query(Account).filter(
+            Account.plaid_connection_status == &quot;connected&quot;
+        ).all()
+
+        for account in accounts:
+            try:
+                result = plaid_service.sync_transactions(account, db, trigger=&quot;scheduled&quot;)
+            except Exception as e:
+                logger.error(f&quot;  {account.name}: sync failed — {e}&quot;)
+    finally:
+        db.close()
+</code></pre>
+<hr>
+<h2 id="38-oauth-callback-handling">3.8 OAuth Callback Handling</h2>
+<p>Some banks (Chase, Wells Fargo, and others) use OAuth for authentication. Instead of entering credentials inside the Plaid widget, the user is redirected to the bank's website. After logging in, the bank redirects back to your app.</p>
+<p>The frontend handles this with a dedicated route at <code>/oauth-callback</code>:</p>
+<pre><code class="language-jsx">// In frontend/src/App.jsx
 
 function OAuthCallback() {
   const navigate = useNavigate()
@@ -530,10 +842,21 @@ function OAuthCallback() {
   return &lt;div className=&quot;empty-state&quot;&gt;&lt;p&gt;Completing bank connection...&lt;/p&gt;&lt;/div&gt;
 }
 </code></pre>
-<p>Before opening the Plaid Link widget for an OAuth bank, the frontend stores the link token and account ID in <code>sessionStorage</code> so they survive the redirect. When Plaid redirects back to <code>/oauth-callback</code>, this component picks up where it left off.</p>
+<p>The flow is: before opening the Plaid Link widget for an OAuth bank, the frontend stores the <code>link_token</code> and <code>account_id</code> in <code>sessionStorage</code>. When the bank redirects back to <code>/oauth-callback</code>, this component retrieves those stored values and completes the exchange. The <code>receivedRedirectUri: window.location.href</code> tells the Plaid SDK that this is a redirect completion, not a new link session.</p>
+<hr>
+<h2 id="39-graceful-degradation">3.9 Graceful Degradation</h2>
+<p>The entire Plaid integration is designed so that a missing configuration doesn't break anything. Here's the chain:</p>
+<ol>
+<li><strong>No credentials</strong> → <code>plaid_service.client</code> returns <code>None</code> → logs a warning, doesn't crash</li>
+<li><strong>Scheduler runs</strong> → no connected accounts → <code>sync_all_accounts_job</code> returns immediately</li>
+<li><strong>User clicks Connect</strong> → <code>_require_client()</code> raises <code>ValueError</code> → frontend shows a helpful error message</li>
+<li><strong>AI categorization unavailable</strong> → Tiers 1 and 2 still work → transaction goes to review queue</li>
+<li><strong>CSV import</strong> → works independently of Plaid → full categorization still runs</li>
+</ol>
+<p>The Settings page (Part 5) provides a UI for entering Plaid credentials. Once saved, they're loaded into the environment on the next restart, and bank syncing becomes available.</p>
 <hr>
 <h2 id="whats-next">What's Next</h2>
-<p>With bank accounts connected and transactions flowing in, Part 4 covers how those transactions get categorized: the 3-tier categorization engine, the review workflow, CSV import, and seed data.</p>
+<p>With bank accounts connected and transactions flowing in, Part 4 covers the categorization engine — the three tiers of automatic categorization, how the review queue works, CSV import, and how the system learns from your confirmations.</p>
 <p>→ <a href="04-categorization-engine.md">Part 4: Transaction Processing &amp; Categorization</a></p>
       </div>
       <div class="docs-nav-footer">

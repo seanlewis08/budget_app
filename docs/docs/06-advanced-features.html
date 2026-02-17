@@ -66,143 +66,141 @@
     <main class="docs-content">
       <div class="md-content">
 <h1 id="part-6-advanced-features">Part 6 — Advanced Features</h1>
-<p>This part covers four advanced systems: AI-powered financial insights, investment portfolio tracking, the background sync scheduler, and the standalone sync daemon for scheduled background updates.</p>
+<p>With the core transaction flow working (import, categorize, review, spend), this part builds the four advanced systems that round out the app: AI-powered financial insights, investment portfolio tracking, the background sync scheduler, and historical archive imports. Each one operates semi-independently — you can use the budgeting features without investments, or skip AI entirely and categorize manually.</p>
 <hr>
 <h2 id="61-ai-financial-insights">6.1 AI Financial Insights</h2>
-<p>The Insights feature uses Claude to analyze spending patterns and provide personalized financial advice through a chat interface with streaming responses.</p>
-<h3 id="backend-backendroutersinsightspy">Backend (<code>backend/routers/insights.py</code>)</h3>
-<p>The insights system uses two Claude models:</p>
-<ul>
-<li><strong>Claude Sonnet 4.5</strong> for the initial deep analysis (higher quality, more expensive)</li>
-<li><strong>Claude Haiku 4.5</strong> for follow-up chat questions (faster, cheaper)</li>
-</ul>
-<p>Both use Anthropic's prompt caching to reduce costs by ~90% on repeated calls with the same financial context.</p>
-<h4 id="financial-snapshot">Financial Snapshot</h4>
-<p>The <code>/api/insights/snapshot</code> endpoint builds a comprehensive financial snapshot from the database:</p>
-<pre><code class="language-python">@router.get(&quot;/snapshot&quot;)
-def get_snapshot(db: Session = Depends(get_db)):
-    &quot;&quot;&quot;Build a financial snapshot for AI analysis.&quot;&quot;&quot;
-    # Last 6 months of spending by category
-    # Monthly totals and trends
-    # Top merchants by spend
-    # Recurring charges
-    # Income vs. expenses
-    # Budget status
-    return snapshot_data
-</code></pre>
-<p>The snapshot is cached server-side for 5 minutes to avoid redundant database queries.</p>
-<h4 id="streaming-analysis">Streaming Analysis</h4>
-<p>The <code>/api/insights/analyze</code> endpoint streams the AI analysis using Server-Sent Events (SSE):</p>
-<pre><code class="language-python">@router.post(&quot;/analyze&quot;)
-async def analyze(body: dict, db: Session = Depends(get_db)):
-    &quot;&quot;&quot;Generate a full financial analysis using Claude Sonnet.&quot;&quot;&quot;
-    snapshot = _build_snapshot(db)
-    context = body.get(&quot;context&quot;, &quot;&quot;)  # Optional user context
+<p>The Insights feature gives you a personal financial advisor powered by Claude. It builds a comprehensive snapshot of your finances from the database, sends it to Claude along with any personal context you provide, and streams the analysis back in real time. Follow-up questions are supported through a chat interface that maintains conversation history.</p>
+<h3 id="building-the-financial-snapshot-backendservicesfinancial_advisorpy">Building the Financial Snapshot (<code>backend/services/financial_advisor.py</code>)</h3>
+<p>Before Claude can analyze anything, it needs data. The <code>build_financial_snapshot</code> function assembles a nine-section summary of your financial life from the last six months. Each section answers a specific question:</p>
+<pre><code class="language-python">def build_financial_snapshot(db: Session) -&gt; dict:
+    &quot;&quot;&quot;Build a comprehensive financial snapshot for AI analysis.&quot;&quot;&quot;
+    six_months_ago = date.today() - timedelta(days=180)
 
-    system_prompt = &quot;&quot;&quot;You are a personal finance advisor analyzing spending data.
-    Provide specific, actionable insights. Reference actual numbers from the data.
-    Structure your analysis with clear sections:
-    1. Spending Overview
-    2. Notable Patterns
-    3. Opportunities to Save
-    4. Recommendations&quot;&quot;&quot;
+    # Fetch all confirmed transactions from the last 6 months
+    transactions = (
+        db.query(Transaction)
+        .filter(
+            Transaction.date &gt;= six_months_ago,
+            Transaction.status.in_([&quot;auto_confirmed&quot;, &quot;manual_confirmed&quot;]),
+        )
+        .all()
+    )
 
-    def generate():
-        with client.messages.stream(
-            model=&quot;claude-sonnet-4-5-20250929&quot;,
-            max_tokens=4096,
-            system=[{
-                &quot;type&quot;: &quot;text&quot;,
-                &quot;text&quot;: system_prompt,
-                &quot;cache_control&quot;: {&quot;type&quot;: &quot;ephemeral&quot;},
-            }],
-            messages=[{
-                &quot;role&quot;: &quot;user&quot;,
-                &quot;content&quot;: f&quot;Financial data:\n{json.dumps(snapshot)}\n\n&quot;
-                           f&quot;Context: {context}\n\nAnalyze my finances.&quot;,
-            }],
-        ) as stream:
-            for text in stream.text_stream:
-                yield f&quot;data: {json.dumps({'text': text})}\n\n&quot;
-        yield &quot;data: [DONE]\n\n&quot;
-
-    return StreamingResponse(generate(), media_type=&quot;text/event-stream&quot;)
-</code></pre>
-<h4 id="follow-up-chat">Follow-up Chat</h4>
-<p>The <code>/api/insights/chat</code> endpoint handles conversational follow-ups using the same financial context but with the faster Haiku model:</p>
-<pre><code class="language-python">@router.post(&quot;/chat&quot;)
-async def chat(body: dict, db: Session = Depends(get_db)):
-    &quot;&quot;&quot;Follow-up questions about finances using Claude Haiku.&quot;&quot;&quot;
-    snapshot = _build_snapshot(db)
-    messages = body.get(&quot;messages&quot;, [])
-
-    def generate():
-        with client.messages.stream(
-            model=&quot;claude-haiku-4-5-20251001&quot;,
-            max_tokens=2048,
-            system=[{
-                &quot;type&quot;: &quot;text&quot;,
-                &quot;text&quot;: f&quot;You are a financial advisor. Data:\n{json.dumps(snapshot)}&quot;,
-                &quot;cache_control&quot;: {&quot;type&quot;: &quot;ephemeral&quot;},
-            }],
-            messages=messages,
-        ) as stream:
-            for text in stream.text_stream:
-                yield f&quot;data: {json.dumps({'text': text})}\n\n&quot;
-        yield &quot;data: [DONE]\n\n&quot;
-
-    return StreamingResponse(generate(), media_type=&quot;text/event-stream&quot;)
-</code></pre>
-<h3 id="frontend-frontendsrcpagesinsightsjsx">Frontend (<code>frontend/src/pages/Insights.jsx</code>)</h3>
-<p>The Insights page provides a full chat-like interface:</p>
-<ul>
-<li><strong>Context input</strong>: User can provide personal context (e.g., "I'm saving for a house") before generating analysis</li>
-<li><strong>Streaming display</strong>: Analysis text streams in real-time with a cursor indicator</li>
-<li><strong>Custom markdown renderer</strong>: Handles headers, bold text, bullet lists, and dollar amount highlighting</li>
-<li><strong>Multi-turn chat</strong>: Follow-up questions with conversation history</li>
-<li><strong>Persistence</strong>: Analysis and chat history saved to <code>localStorage</code> so they survive page refreshes</li>
-<li><strong>Timestamps</strong>: Shows when the last analysis was generated</li>
-</ul>
-<p>The streaming handler on the frontend:</p>
-<pre><code class="language-jsx">const handleAnalyze = async () =&gt; {
-  setIsAnalyzing(true)
-  setAnalysis('')
-
-  const response = await fetch('/api/insights/analyze', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ context }),
-  })
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let fullText = ''
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-
-    const chunk = decoder.decode(value)
-    const lines = chunk.split('\n')
-
-    for (const line of lines) {
-      if (line.startsWith('data: ') &amp;&amp; line !== 'data: [DONE]') {
-        const data = JSON.parse(line.slice(6))
-        fullText += data.text
-        setAnalysis(fullText)
-      }
+    snapshot = {
+        &quot;period&quot;: f&quot;{six_months_ago} to {date.today()}&quot;,
+        &quot;income&quot;: _calc_income(transactions),
+        &quot;expenses&quot;: _calc_expenses(transactions),
+        &quot;recurring_charges&quot;: _find_recurring(transactions),
+        &quot;cash_flow&quot;: _monthly_cash_flow(transactions),
+        &quot;budget_status&quot;: _budget_status(db),
+        &quot;accounts&quot;: _account_summary(db),
+        &quot;investments&quot;: _investment_summary(),
+        &quot;savings_progress&quot;: _savings_rate(transactions),
+        &quot;top_categories&quot;: _top_spending_categories(transactions),
     }
-  }
-
-  setIsAnalyzing(false)
-  localStorage.setItem('insights_analysis', fullText)
+    return snapshot
+</code></pre>
+<p>The key design decision is what to exclude. Internal transfers between your own accounts (rent payments from checking to landlord, credit card payments) inflate both income and expenses if counted. The function maintains an <code>EXCLUDED_CATEGORIES</code> set:</p>
+<pre><code class="language-python">EXCLUDED_CATEGORIES = {
+    &quot;credit_card_payment&quot;, &quot;transfer&quot;, &quot;payment&quot;, &quot;balance&quot;,
+    &quot;internal_transfer&quot;, &quot;account_transfer&quot;,
 }
 </code></pre>
+<p>Any transaction whose category <code>short_desc</code> falls in this set gets filtered out of income and expense calculations. This gives you a realistic picture of money coming in versus money going out.</p>
+<p>The <code>format_snapshot_for_prompt</code> function converts the nested dictionary into readable text. Claude processes natural language better than raw JSON, so instead of sending <code>{"groceries": 847.23}</code>, it sends <code>Groceries: $847.23</code>. The formatted snapshot typically runs 500–1,500 words depending on how many accounts and categories you have.</p>
+<h3 id="the-insights-router-backendroutersinsightspy">The Insights Router (<code>backend/routers/insights.py</code>)</h3>
+<p>The router exposes three endpoints, each serving a different purpose:</p>
+<pre><code class="language-python">MODEL_ANALYZE = &quot;claude-sonnet-4-5-20250929&quot;   # Deep analysis
+MODEL_CHAT    = &quot;claude-haiku-4-5-20251001&quot;     # Follow-up chat
+</code></pre>
+<p>The model split is deliberate. The initial analysis benefits from Sonnet's stronger reasoning — it catches patterns like "your restaurant spending doubled in December" or "you're paying for two overlapping streaming services." Follow-up questions like "how much exactly did I spend on streaming?" don't need that depth, so Haiku handles them at roughly one-quarter the cost.</p>
+<p><strong>Snapshot caching.</strong> Building the snapshot queries the database extensively. Since the data doesn't change between requests (no one imports transactions mid-analysis), the router caches it:</p>
+<pre><code class="language-python">_snapshot_cache = {}
+_snapshot_ttl = 300  # 5 minutes
+
+def _get_snapshot(db: Session, force_refresh: bool = False) -&gt; dict:
+    now = time.time()
+    if (not force_refresh
+        and &quot;data&quot; in _snapshot_cache
+        and now - _snapshot_cache.get(&quot;timestamp&quot;, 0) &lt; _snapshot_ttl):
+        return _snapshot_cache[&quot;data&quot;]
+
+    snapshot = build_financial_snapshot(db)
+    formatted = format_snapshot_for_prompt(snapshot)
+    _snapshot_cache[&quot;data&quot;] = formatted
+    _snapshot_cache[&quot;raw&quot;] = snapshot
+    _snapshot_cache[&quot;timestamp&quot;] = now
+    return formatted
+</code></pre>
+<p>The <code>force_refresh</code> parameter lets the analyze endpoint always get fresh data, while the chat endpoint reuses the cached snapshot for the duration of a conversation.</p>
+<p><strong>Streaming with Server-Sent Events.</strong> Both the <code>/analyze</code> and <code>/chat</code> endpoints stream Claude's response token by token. The pattern is the same for both:</p>
+<pre><code class="language-python">@router.post(&quot;/analyze&quot;)
+async def analyze(body: dict, db: Session = Depends(get_db)):
+    snapshot = _get_snapshot(db, force_refresh=True)
+    context = body.get(&quot;context&quot;, &quot;&quot;)
+
+    system_prompt = f&quot;&quot;&quot;You are a personal finance advisor...
+    Here is the user's financial data:
+    {snapshot}&quot;&quot;&quot;
+
+    def generate():
+        yield from _stream_anthropic(
+            model=MODEL_ANALYZE,
+            system=system_prompt,
+            messages=[{
+                &quot;role&quot;: &quot;user&quot;,
+                &quot;content&quot;: f&quot;Context: {context}\n\nAnalyze my finances.&quot;
+            }],
+        )
+
+    return StreamingResponse(generate(), media_type=&quot;text/event-stream&quot;)
+</code></pre>
+<p>The <code>_stream_anthropic</code> helper wraps the Anthropic streaming API and formats each chunk as an SSE event:</p>
+<pre><code class="language-python">def _stream_anthropic(model, system, messages, max_tokens=4096):
+    client = anthropic.Anthropic()
+
+    with client.messages.stream(
+        model=model,
+        max_tokens=max_tokens,
+        system=[{
+            &quot;type&quot;: &quot;text&quot;,
+            &quot;text&quot;: system,
+            &quot;cache_control&quot;: {&quot;type&quot;: &quot;ephemeral&quot;},
+        }],
+        messages=messages,
+    ) as stream:
+        for text in stream.text_stream:
+            yield f&quot;data: {json.dumps({'text': text})}\n\n&quot;
+
+    yield &quot;data: [DONE]\n\n&quot;
+</code></pre>
+<p>The <code>cache_control: ephemeral</code> annotation enables Anthropic's prompt caching. When you ask multiple follow-up questions, the system prompt (which contains your full financial snapshot) gets cached on Anthropic's servers for about five minutes. Subsequent requests with the same system prompt skip re-processing it, reducing costs by roughly 90% and cutting latency significantly.</p>
+<p><strong>Follow-up chat</strong> uses the same pattern but with a few differences: it uses the Haiku model, accepts a full <code>messages</code> array (so Claude sees the conversation history), and doesn't force-refresh the snapshot:</p>
+<pre><code class="language-python">@router.post(&quot;/chat&quot;)
+async def chat(body: dict, db: Session = Depends(get_db)):
+    snapshot = _get_snapshot(db)  # Uses cache
+    messages = body.get(&quot;messages&quot;, [])
+
+    system_prompt = f&quot;You are a financial advisor. Data:\n{snapshot}&quot;
+
+    def generate():
+        yield from _stream_anthropic(
+            model=MODEL_CHAT,
+            system=system_prompt,
+            messages=messages,
+            max_tokens=2048,
+        )
+
+    return StreamingResponse(generate(), media_type=&quot;text/event-stream&quot;)
+</code></pre>
+<p>The <code>/snapshot</code> endpoint returns the raw data without AI processing, which the frontend uses to show a "Financial Summary" sidebar alongside the chat.</p>
+<h3 id="graceful-degradation">Graceful Degradation</h3>
+<p>If the <code>ANTHROPIC_API_KEY</code> isn't configured, the analyze endpoint returns an SSE error message explaining how to set it up. The rest of the app works normally — you can still import, categorize, and track budgets without AI.</p>
 <hr>
 <h2 id="62-investment-portfolio-tracking">6.2 Investment Portfolio Tracking</h2>
-<p>The investment system uses a separate SQLite database (<code>~/BudgetApp/investments.db</code>) to track holdings, prices, and investment transactions.</p>
+<p>Investment tracking lives in a completely separate database (<code>~/BudgetApp/investments.db</code>) with its own models, sessions, and migration logic. This isolation means you can use the budgeting features without ever touching investments, and the main database stays lean for the queries that happen most often.</p>
 <h3 id="separate-database-backendinvestments_databasepy">Separate Database (<code>backend/investments_database.py</code>)</h3>
-<p>Mirrors the main database setup but points to <code>investments.db</code>:</p>
+<p>The investments database mirrors the main database setup exactly — same engine configuration, same WAL mode, same foreign key enforcement:</p>
 <pre><code class="language-python">DB_DIR = Path.home() / &quot;BudgetApp&quot;
 DB_PATH = DB_DIR / &quot;investments.db&quot;
 DATABASE_URL = f&quot;sqlite:///{DB_PATH}&quot;
@@ -212,38 +210,37 @@ engine = create_engine(DATABASE_URL, connect_args={
     &quot;timeout&quot;: 30,
 })
 
-# WAL mode + foreign keys (same as main DB)
 @event.listens_for(engine, &quot;connect&quot;)
 def set_sqlite_pragma(dbapi_connection, connection_record):
     cursor = dbapi_connection.cursor()
     cursor.execute(&quot;PRAGMA journal_mode=WAL&quot;)
     cursor.execute(&quot;PRAGMA foreign_keys=ON&quot;)
     cursor.close()
-
-InvestmentsSessionLocal = sessionmaker(bind=engine)
-InvestmentsBase = declarative_base()
 </code></pre>
+<p>A separate <code>get_investments_db</code> dependency works identically to the main <code>get_db</code>, providing database sessions to investment endpoints.</p>
 <h3 id="investment-models-backendmodels_investmentspy">Investment Models (<code>backend/models_investments.py</code>)</h3>
-<p>Four models track the investment portfolio:</p>
-<p><strong>InvestmentAccount</strong>: Links to the main Account table via <code>plaid_item_id</code> for access token reuse.</p>
+<p>Four tables track the portfolio:</p>
+<p><strong>InvestmentAccount</strong> represents a brokerage account (Fidelity, Schwab, etc.). It links to the main database's <code>Account</code> table through <code>plaid_item_id</code> — when both your checking account and your brokerage are at the same institution, they share a Plaid connection, and the investment account reuses the encrypted access token stored on the banking side.</p>
 <pre><code class="language-python">class InvestmentAccount(InvestmentsBase):
     __tablename__ = &quot;investment_accounts&quot;
 
     id = Column(Integer, primary_key=True)
-    plaid_item_id = Column(String(100))     # Links to Account.plaid_item_id
-    account_name = Column(String(200))
-    account_type = Column(String(50))       # taxable, roth, traditional_ira, 401k
+    plaid_item_id = Column(String(100))
     plaid_account_id = Column(String(100))
-    last_synced_at = Column(DateTime)
+    account_name = Column(String(200))
+    account_type = Column(String(50))        # taxable, roth, traditional_ira, 401k
+    institution_name = Column(String(200))
     connection_status = Column(String(20), default=&quot;connected&quot;)
+    last_synced_at = Column(DateTime)
+    last_sync_error = Column(String(500))
 </code></pre>
-<p><strong>Security</strong>: Represents a financial instrument (stock, ETF, mutual fund).</p>
+<p><strong>Security</strong> represents a financial instrument — a stock, ETF, mutual fund, or cash equivalent. Not every security has a ticker symbol (some mutual funds are identified only by CUSIP), so the <code>ticker</code> field is nullable:</p>
 <pre><code class="language-python">class Security(InvestmentsBase):
     __tablename__ = &quot;securities&quot;
 
     id = Column(Integer, primary_key=True)
     plaid_security_id = Column(String(100), unique=True)
-    ticker = Column(String(20))           # nullable — some funds lack tickers
+    ticker = Column(String(20))
     name = Column(String(200))
     security_type = Column(String(50))    # stock, etf, mutual_fund, cash_equivalent
     sector = Column(String(100))
@@ -251,7 +248,7 @@ InvestmentsBase = declarative_base()
     close_price_as_of = Column(Date)
     price_source = Column(String(20))     # plaid, yfinance, manual
 </code></pre>
-<p><strong>Holding</strong>: A position in a security. Daily snapshots enable performance charting.</p>
+<p><strong>Holding</strong> represents a position — how many shares of a security you own in a given account. The unique constraint on <code>(investment_account_id, security_id, as_of_date)</code> enables daily snapshots: each day you sync, a new row records that day's position. Over time, these snapshots let you chart portfolio performance:</p>
 <pre><code class="language-python">class Holding(InvestmentsBase):
     __tablename__ = &quot;holdings&quot;
 
@@ -260,221 +257,284 @@ InvestmentsBase = declarative_base()
     security_id = Column(Integer, ForeignKey(&quot;securities.id&quot;))
     quantity = Column(Float)
     cost_basis = Column(Float)
-    cost_basis_per_unit = Column(Float)
     current_value = Column(Float)
     as_of_date = Column(Date)
 
-    # Unique constraint enables daily snapshots
     __table_args__ = (
         UniqueConstraint(&quot;investment_account_id&quot;, &quot;security_id&quot;, &quot;as_of_date&quot;),
     )
 </code></pre>
-<p><strong>InvestmentTransaction</strong>: Buys, sells, dividends, and transfers.</p>
+<p><strong>InvestmentTransaction</strong> records buys, sells, dividends, and transfers with Plaid deduplication:</p>
 <pre><code class="language-python">class InvestmentTransaction(InvestmentsBase):
     __tablename__ = &quot;investment_transactions&quot;
 
     id = Column(Integer, primary_key=True)
+    plaid_investment_transaction_id = Column(String(100), unique=True)
     investment_account_id = Column(Integer, ForeignKey(&quot;investment_accounts.id&quot;))
     security_id = Column(Integer, ForeignKey(&quot;securities.id&quot;))
-    plaid_investment_transaction_id = Column(String(100), unique=True)
     date = Column(Date)
-    type = Column(String(50))  # buy, sell, dividend, transfer, capital_gain, cash
+    type = Column(String(50))    # buy, sell, dividend, transfer, capital_gain
     quantity = Column(Float)
     price = Column(Float)
     amount = Column(Float)
     fees = Column(Float)
 </code></pre>
-<h3 id="plaid-investment-sync">Plaid Investment Sync</h3>
-<p>The Plaid service reuses the access token from the main Account table (since both checking and investment accounts live under the same Plaid item for the same institution):</p>
-<pre><code class="language-python">def sync_investments(self, account, inv_db):
-    &quot;&quot;&quot;Sync investment holdings and transactions from Plaid.&quot;&quot;&quot;
-    access_token = self.decrypt_token(account.plaid_access_token)
+<h3 id="investment-api-backendroutersinvestmentspy">Investment API (<code>backend/routers/investments.py</code>)</h3>
+<p>The investments router is the largest in the app, with endpoints organized into five groups:</p>
+<p><strong>Portfolio summary</strong> (<code>GET /summary</code>) computes totals from the latest holding snapshot. It finds the most recent <code>as_of_date</code> in the holdings table, sums up current values and cost bases, then compares against the previous snapshot date to calculate day change:</p>
+<pre><code class="language-python">@router.get(&quot;/summary&quot;)
+def portfolio_summary(inv_db: Session = Depends(get_investments_db)):
+    latest_date = inv_db.query(func.max(Holding.as_of_date)).scalar()
+    if not latest_date:
+        return {&quot;total_value&quot;: 0, &quot;total_cost_basis&quot;: 0, ...}
 
-    # 1. Fetch holdings
-    response = self.client.investments_holdings_get(
-        InvestmentsHoldingsGetRequest(access_token=access_token)
+    holdings = inv_db.query(Holding).filter(
+        Holding.as_of_date == latest_date
+    ).all()
+
+    total_value = sum(h.current_value or 0 for h in holdings)
+    total_cost_basis = sum(h.cost_basis or 0 for h in holdings)
+    total_gain_loss = total_value - total_cost_basis
+
+    # Day change: compare latest snapshot to previous one
+    prev_date = inv_db.query(func.max(Holding.as_of_date)).filter(
+        Holding.as_of_date &lt; latest_date
+    ).scalar()
+    ...
+</code></pre>
+<p><strong>Holdings</strong> (<code>GET /holdings</code>) returns every position with computed fields like gain/loss percentage and portfolio weight. Each holding joins to its Security (for ticker and price) and InvestmentAccount (for the account name).</p>
+<p><strong>Performance</strong> (<code>GET /performance</code>) returns a date series of daily portfolio values for charting. It groups holdings by <code>as_of_date</code> and sums their values, giving you a time series you can plot against a benchmark.</p>
+<p><strong>Allocation</strong> (<code>GET /allocation</code>) breaks down the portfolio two ways: by security type (stock, ETF, mutual fund) and by sector (technology, healthcare, etc.). Both return name-value-percentage triples for pie/donut charts.</p>
+<p><strong>Account management</strong> includes Plaid linking for investment accounts, manual account creation, manual holding entry (for brokerages that don't support Plaid), and sync triggers.</p>
+<h3 id="manual-entry">Manual Entry</h3>
+<p>Not every brokerage supports Plaid's investment product. The manual entry flow lets you create an account and add holdings by ticker:</p>
+<pre><code class="language-python">@router.post(&quot;/accounts/manual&quot;)
+def create_manual_account(data: ManualAccountRequest, inv_db):
+    inv_account = InvestmentAccount(
+        account_name=data.account_name,
+        account_type=data.account_type,
+        institution_name=data.institution_name,
+        connection_status=&quot;manual&quot;,
     )
+    inv_db.add(inv_account)
+    inv_db.commit()
 
-    # 2. Upsert securities
-    for sec in response.securities:
-        existing = inv_db.query(Security).filter(
-            Security.plaid_security_id == sec.security_id
-        ).first()
-        if existing:
-            existing.close_price = sec.close_price
-            existing.close_price_as_of = sec.close_price_as_of
-        else:
-            inv_db.add(Security(
-                plaid_security_id=sec.security_id,
-                ticker=sec.ticker_symbol,
-                name=sec.name,
-                security_type=sec.type,
-                close_price=sec.close_price,
-            ))
+@router.post(&quot;/accounts/{account_id}/holdings&quot;)
+def add_manual_holding(account_id, data: ManualHoldingRequest, inv_db):
+    # Find or create the Security by ticker
+    security = inv_db.query(Security).filter(
+        Security.ticker == data.ticker.upper()
+    ).first()
+    if not security:
+        security = Security(
+            ticker=data.ticker.upper(),
+            name=data.name or data.ticker.upper(),
+            security_type=&quot;equity&quot;,
+        )
+        inv_db.add(security)
+        inv_db.flush()
 
-    # 3. Upsert holdings (today's snapshot)
-    for holding in response.holdings:
-        # Creates or updates today's holding snapshot
+    # Fetch current price from Yahoo Finance
+    current_price = security.close_price
+    if not current_price:
+        current_price = fetch_price_for_ticker(data.ticker.upper())
         ...
 
-    # 4. Fetch investment transactions
-    response = self.client.investments_transactions_get(
-        InvestmentsTransactionsGetRequest(
-            access_token=access_token,
-            start_date=start_date,
-            end_date=end_date,
-        )
+    holding = Holding(
+        investment_account_id=account_id,
+        security_id=security.id,
+        quantity=data.quantity,
+        cost_basis=cost_basis_per_share * data.quantity,
+        current_value=current_price * data.quantity,
+        as_of_date=date.today(),
     )
-
-    # 5. Deduplicate and insert
-    for txn in response.investment_transactions:
-        existing = inv_db.query(InvestmentTransaction).filter(
-            InvestmentTransaction.plaid_investment_transaction_id == txn.investment_transaction_id
-        ).first()
-        if not existing:
-            inv_db.add(InvestmentTransaction(...))
-
+    inv_db.add(holding)
     inv_db.commit()
 </code></pre>
+<p>When you add a holding manually, the system immediately tries to fetch its current price from Yahoo Finance so your portfolio value is accurate from the start.</p>
 <h3 id="live-price-fetcher-backendservicesprice_fetcherpy">Live Price Fetcher (<code>backend/services/price_fetcher.py</code>)</h3>
-<p>Fetches real-time stock prices using <code>yfinance</code> during market hours:</p>
-<pre><code class="language-python">import yfinance as yf
-from datetime import datetime
-import pytz
+<p>Stock prices go stale fast. The price fetcher uses <code>yfinance</code> to batch-update all securities that have ticker symbols:</p>
+<pre><code class="language-python">def fetch_all_prices(inv_db: Session) -&gt; dict:
+    securities = inv_db.query(Security).filter(
+        Security.ticker.isnot(None)
+    ).all()
 
-class PriceFetcher:
-    @staticmethod
-    def is_market_open():
-        &quot;&quot;&quot;Check if US stock market is currently open.&quot;&quot;&quot;
-        et = pytz.timezone('US/Eastern')
-        now = datetime.now(et)
-        if now.weekday() &gt;= 5:  # Saturday/Sunday
-            return False
-        market_open = now.replace(hour=9, minute=30, second=0)
-        market_close = now.replace(hour=16, minute=0, second=0)
-        return market_open &lt;= now &lt;= market_close
+    tickers = list(set(s.ticker for s in securities if s.ticker))
+    if not tickers:
+        return {&quot;updated&quot;: 0, &quot;failed&quot;: 0, &quot;tickers&quot;: []}
 
-    @staticmethod
-    def fetch_all_prices(db):
-        &quot;&quot;&quot;Batch-fetch prices for all securities with tickers.&quot;&quot;&quot;
-        securities = db.query(Security).filter(
-            Security.ticker.isnot(None)
-        ).all()
+    # Batch download — one API call for all tickers
+    data = yf.download(tickers, period=&quot;1d&quot;, progress=False)
 
-        tickers = [s.ticker for s in securities]
-        if not tickers:
-            return
+    updated = 0
+    for security in securities:
+        try:
+            price = float(data[&quot;Close&quot;][security.ticker].iloc[-1])
+            security.close_price = price
+            security.close_price_as_of = date.today()
+            security.price_source = &quot;yfinance&quot;
+            updated += 1
+        except (KeyError, IndexError):
+            continue
 
-        # yfinance batch download
-        data = yf.download(tickers, period=&quot;1d&quot;, progress=False)
-
-        for security in securities:
-            try:
-                price = data['Close'][security.ticker].iloc[-1]
-                security.close_price = float(price)
-                security.close_price_as_of = datetime.now().date()
-                security.price_source = &quot;yfinance&quot;
-            except (KeyError, IndexError):
-                continue
-
-        db.commit()
+    inv_db.commit()
+    return {&quot;updated&quot;: updated, ...}
 </code></pre>
-<h3 id="investment-api-endpoints-backendroutersinvestmentspy">Investment API Endpoints (<code>backend/routers/investments.py</code>)</h3>
-<p>Key endpoints:</p>
-<ul>
-<li><code>GET /api/investments/summary</code> — Portfolio totals: value, cost basis, gain/loss, day change</li>
-<li><code>GET /api/investments/holdings</code> — All holdings with per-security metrics</li>
-<li><code>GET /api/investments/performance?months=12</code> — Date series for the performance chart</li>
-<li><code>GET /api/investments/allocation</code> — Breakdown by security type and sector</li>
-<li><code>GET /api/investments/transactions</code> — Investment transaction history with type filtering</li>
-<li><code>POST /api/investments/link-token</code> — Plaid link token with investments product</li>
-<li><code>POST /api/investments/link/exchange</code> — Exchange token and create InvestmentAccount</li>
-<li><code>POST /api/investments/accounts/{id}/sync</code> — Manual sync trigger</li>
-<li><code>POST /api/investments/refresh-prices</code> — Manual price refresh via yfinance</li>
-</ul>
-<h3 id="frontend-frontendsrcpagesinvestmentsjsx">Frontend (<code>frontend/src/pages/Investments.jsx</code>)</h3>
-<p>The investments page has five sections stacked vertically:</p>
-<ol>
-<li><strong>Portfolio Overview</strong>: Stat cards showing total value, cost basis, gain/loss ($ and %), and day change</li>
-<li><strong>Holdings Table</strong>: Sortable by any column (ticker, shares, price, value, gain/loss, weight %). Green/red coloring on gain/loss columns</li>
-<li><strong>Charts Row</strong>: Performance line chart (portfolio vs. SPY benchmark) and allocation donut chart side by side</li>
-<li><strong>Transaction History</strong>: Filterable by type (buy, sell, dividend) with pagination</li>
-<li><strong>Account Management</strong>: Cards per investment account with sync buttons, plus "Link Investment Account" button for new Plaid connections</li>
-</ol>
+<p>The batch download is important — <code>yfinance</code> makes a single HTTP request for all tickers instead of one per ticker, which is dramatically faster when you hold 20+ securities.</p>
+<p>The <code>is_market_open</code> function checks whether the US stock market is currently open (weekdays, 9:30 AM–4:00 PM Eastern). The scheduler uses this to avoid wasting API calls on evenings and weekends:</p>
+<pre><code class="language-python">def is_market_open() -&gt; bool:
+    et = datetime.now(ZoneInfo(&quot;US/Eastern&quot;))
+    if et.weekday() &gt;= 5:  # Saturday or Sunday
+        return False
+    market_open = et.replace(hour=9, minute=30, second=0)
+    market_close = et.replace(hour=16, minute=0, second=0)
+    return market_open &lt;= et &lt;= market_close
+</code></pre>
 <hr>
-<h2 id="63-background-sync-scheduler">6.3 Background Sync Scheduler</h2>
-<p>The APScheduler-based scheduler runs three background jobs while the app is open:</p>
-<h3 id="backendservicessync_schedulerpy"><code>backend/services/sync_scheduler.py</code></h3>
-<pre><code class="language-python">from apscheduler.schedulers.background import BackgroundScheduler
+<h2 id="63-budget-system">6.3 Budget System</h2>
+<p>The budget system is intentionally simple. Each budget is a row mapping a parent category to a monthly dollar limit. Spending is computed at query time by summing confirmed transactions — there's no running total to maintain or reconcile.</p>
+<h3 id="budget-router-backendroutersbudgetspy">Budget Router (<code>backend/routers/budgets.py</code>)</h3>
+<p>The <code>GET /</code> endpoint fetches all budgets and calculates current spending in a single query:</p>
+<pre><code class="language-python">@router.get(&quot;/&quot;)
+def list_budgets(month: str = None, db: Session = Depends(get_db)):
+    if not month:
+        month = date.today().strftime(&quot;%Y-%m&quot;)
 
-scheduler = BackgroundScheduler()
+    year, mo = month.split(&quot;-&quot;)
+    start = date(int(year), int(mo), 1)
+    end = (start + timedelta(days=32)).replace(day=1)
 
-def start_scheduler():
-    &quot;&quot;&quot;Start background sync jobs.&quot;&quot;&quot;
+    budgets = db.query(Budget).all()
+    results = []
 
-    # Sync bank transactions every 4 hours
+    for b in budgets:
+        # Sum spending for this category's children
+        spent = (
+            db.query(func.sum(Transaction.amount))
+            .join(Category, Transaction.category_id == Category.id)
+            .filter(
+                Category.parent_id == b.category_id,
+                Transaction.date &gt;= start,
+                Transaction.date &lt; end,
+                Transaction.status.in_([&quot;auto_confirmed&quot;, &quot;manual_confirmed&quot;]),
+                Transaction.amount &gt; 0,
+            )
+            .scalar() or 0
+        )
+
+        results.append({
+            &quot;id&quot;: b.id,
+            &quot;category_id&quot;: b.category_id,
+            &quot;category_name&quot;: b.category.display_name,
+            &quot;amount&quot;: b.amount,
+            &quot;spent&quot;: round(float(spent), 2),
+            &quot;remaining&quot;: round(b.amount - float(spent), 2),
+            &quot;pct&quot;: round(float(spent) / b.amount * 100, 1) if b.amount &gt; 0 else 0,
+        })
+
+    return sorted(results, key=lambda x: x[&quot;pct&quot;], reverse=True)
+</code></pre>
+<p>The query joins through the Category table to sum all child categories under each budget's parent. A "Food" budget with a $600 limit captures spending from subcategories like groceries, restaurants, and coffee shops.</p>
+<p>The sorting by percentage descending puts the most over-budget categories first, which is what you want to see at a glance.</p>
+<p><strong>Creating and updating budgets</strong> uses an upsert pattern — if a budget for that category already exists, update the amount; otherwise create a new one:</p>
+<pre><code class="language-python">@router.post(&quot;/&quot;)
+def upsert_budget(req: BudgetCreate, db: Session = Depends(get_db)):
+    existing = db.query(Budget).filter(
+        Budget.category_id == req.category_id
+    ).first()
+
+    if existing:
+        existing.amount = req.amount
+        db.commit()
+        return {&quot;status&quot;: &quot;updated&quot;, &quot;id&quot;: existing.id}
+    else:
+        budget = Budget(category_id=req.category_id, amount=req.amount)
+        db.add(budget)
+        db.commit()
+        return {&quot;status&quot;: &quot;created&quot;, &quot;id&quot;: budget.id}
+</code></pre>
+<p>This means the frontend doesn't need to know whether it's creating or editing — it always sends the same POST request.</p>
+<hr>
+<h2 id="64-background-sync-scheduler">6.4 Background Sync Scheduler</h2>
+<p>When the app is running, a background scheduler keeps data fresh without manual intervention. It uses APScheduler's <code>BackgroundScheduler</code>, which runs jobs in a thread pool alongside the FastAPI server.</p>
+<h3 id="scheduler-configuration-backendservicessync_schedulerpy">Scheduler Configuration (<code>backend/services/sync_scheduler.py</code>)</h3>
+<p>Three jobs run on different schedules:</p>
+<pre><code class="language-python">def start_scheduler():
+    # Bank transaction sync — every 4 hours
     scheduler.add_job(
         sync_all_accounts_job,
-        'interval',
-        hours=4,
-        id='sync_transactions',
+        trigger=IntervalTrigger(hours=4),
+        id=&quot;plaid_sync_all&quot;,
+        name=&quot;Sync all Plaid accounts&quot;,
+        replace_existing=True,
     )
 
-    # Sync investment holdings every 6 hours
+    # Investment holdings + transactions — every 6 hours
     scheduler.add_job(
         sync_investments_job,
-        'interval',
-        hours=6,
-        id='sync_investments',
+        trigger=IntervalTrigger(hours=6),
+        id=&quot;investment_sync&quot;,
+        name=&quot;Sync investment accounts&quot;,
+        replace_existing=True,
     )
 
-    # Fetch stock prices every 30 min (weekdays, market hours only)
+    # Stock prices — weekdays during market hours
     scheduler.add_job(
         fetch_prices_job,
-        'interval',
-        minutes=30,
-        id='fetch_prices',
+        trigger=CronTrigger(
+            day_of_week=&quot;mon-fri&quot;,
+            hour=&quot;9-16&quot;,
+            minute=&quot;0,30&quot;,
+            timezone=&quot;US/Eastern&quot;,
+        ),
+        id=&quot;price_refresh&quot;,
+        name=&quot;Refresh stock prices&quot;,
+        replace_existing=True,
     )
 
     scheduler.start()
-
-
-def stop_scheduler():
-    scheduler.shutdown(wait=False)
-
-
-def sync_all_accounts_job():
-    &quot;&quot;&quot;Sync all connected bank accounts.&quot;&quot;&quot;
-    db = SessionLocal()
-    plaid = PlaidService()
-    accounts = db.query(Account).filter(
-        Account.plaid_connection_status == &quot;connected&quot;
-    ).all()
-    for account in accounts:
-        try:
-            plaid.sync_transactions(account, db, trigger=&quot;scheduled&quot;)
-        except Exception as e:
-            logger.error(f&quot;Scheduled sync failed for {account.name}: {e}&quot;)
-    db.close()
-
-
-def fetch_prices_job():
-    &quot;&quot;&quot;Refresh stock prices (only during market hours).&quot;&quot;&quot;
-    if not PriceFetcher.is_market_open():
-        return
-    inv_db = InvestmentsSessionLocal()
-    PriceFetcher.fetch_all_prices(inv_db)
-    inv_db.close()
 </code></pre>
-<p>The scheduler is started during FastAPI's <code>lifespan</code> startup and stopped during shutdown.</p>
+<p>The bank sync uses a simple interval trigger — every four hours regardless of the time of day. The price refresh uses a cron trigger that only fires on weekdays during market hours (9:00 AM–4:30 PM Eastern), running every 30 minutes. There's no point fetching prices at midnight or on Sunday.</p>
+<p>Each job function creates its own database session, does its work, and closes the session in a <code>finally</code> block. This is important because APScheduler runs jobs in a thread pool, and SQLAlchemy sessions aren't thread-safe:</p>
+<pre><code class="language-python">def sync_all_accounts_job():
+    db = SessionLocal()
+    try:
+        accounts = db.query(Account).filter(
+            Account.plaid_connection_status == &quot;connected&quot;
+        ).all()
+
+        for account in accounts:
+            try:
+                result = plaid_service.sync_transactions(
+                    account, db, trigger=&quot;scheduled&quot;
+                )
+                logger.info(f&quot;  {account.name}: +{result['added']}&quot;)
+            except Exception as e:
+                logger.error(f&quot;  {account.name}: sync failed — {e}&quot;)
+    finally:
+        db.close()
+</code></pre>
+<p>Notice the per-account try/except inside the loop. If one account fails (maybe its Plaid connection expired), the other accounts still get synced. Without this, a single broken connection would prevent all accounts from updating.</p>
+<p>The investment sync job is more complex because it needs two database sessions — one for <code>investments.db</code> and one for <code>budget.db</code> (to look up encrypted access tokens). Both sessions are opened at the start and closed in <code>finally</code>.</p>
+<h3 id="lifecycle-integration">Lifecycle Integration</h3>
+<p>The scheduler hooks into FastAPI's lifespan events in <code>main.py</code>:</p>
+<pre><code class="language-python">@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    init_investments_db()
+    start_scheduler()
+    yield
+    stop_scheduler()
+</code></pre>
+<p>When the server starts, the scheduler starts. When the server shuts down (Ctrl+C, or Electron closing), the scheduler shuts down gracefully with <code>scheduler.shutdown(wait=False)</code>. The <code>wait=False</code> means it doesn't block waiting for any currently-running job to finish — it just stops scheduling new ones.</p>
 <hr>
-<h2 id="64-standalone-sync-daemon-backendsync_daemonpy">6.4 Standalone Sync Daemon (<code>backend/sync_daemon.py</code>)</h2>
-<p>For syncing transactions when the app isn't open, a standalone daemon runs as a macOS LaunchAgent (or cron job):</p>
-<pre><code class="language-python">#!/usr/bin/env python3
-&quot;&quot;&quot;
-Budget App Sync Daemon — runs independently of the Electron app.
-Designed for macOS LaunchAgent (or cron job) scheduling.
-&quot;&quot;&quot;
+<h2 id="65-standalone-sync-daemon-backendsync_daemonpy">6.5 Standalone Sync Daemon (<code>backend/sync_daemon.py</code>)</h2>
+<p>The background scheduler only runs while the app is open. If you only open the app once a week, you'll have a week of un-synced transactions to process. The sync daemon solves this — it runs independently of the desktop app, syncing transactions on a schedule (typically via macOS LaunchAgent or cron).</p>
+<h3 id="how-it-works">How It Works</h3>
+<p>The daemon is a standalone Python script that imports the same database and Plaid modules as the main app:</p>
+<pre><code class="language-python">from backend.database import SessionLocal, init_db
+from backend.models import Account
+from backend.services.plaid_service import PlaidService
 
 def sync_all():
     &quot;&quot;&quot;Sync all connected Plaid accounts once.&quot;&quot;&quot;
@@ -489,81 +549,80 @@ def sync_all():
     for account in accounts:
         try:
             result = plaid.sync_transactions(account, db, trigger=&quot;scheduled&quot;)
-            logger.info(f&quot;  {account.name}: +{result['added']} new, &quot;
-                        f&quot;{result['modified']} updated, {result['removed']} removed&quot;)
+            logger.info(f&quot;  {account.name}: +{result['added']} new&quot;)
         except Exception as e:
             logger.error(f&quot;  {account.name}: FAILED — {e}&quot;)
     db.close()
-
-
-def backup_database():
-    &quot;&quot;&quot;Commit and push budget.db to a private Git repository.&quot;&quot;&quot;
-    # Stage, commit with descriptive message, push to origin
-    ...
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(&quot;--loop&quot;, action=&quot;store_true&quot;,
-                        help=&quot;Run continuously, syncing every 12 hours&quot;)
-    parser.add_argument(&quot;--no-backup&quot;, action=&quot;store_true&quot;,
-                        help=&quot;Skip Git backup after sync&quot;)
-    args = parser.parse_args()
-
-    if args.loop:
-        while True:
-            sync_all()
-            if not args.no_backup:
-                backup_database()
-            time.sleep(12 * 3600)
-    else:
-        sync_all()
-        if not args.no_backup:
-            backup_database()
 </code></pre>
-<h3 id="macos-launchagent-setup">macOS LaunchAgent Setup</h3>
-<p>To run the daemon automatically every 12 hours, create a LaunchAgent plist:</p>
+<p>It writes to the same <code>budget.db</code> file, so the next time you open the desktop app, all the recent transactions are already there waiting to be reviewed.</p>
+<h3 id="git-backup">Git Backup</h3>
+<p>After each sync, the daemon can optionally commit <code>budget.db</code> to a private Git repository. This gives you versioned backups of your financial data:</p>
+<pre><code class="language-python">def backup_database():
+    git_dir = BUDGET_DIR / &quot;.git&quot;
+    if not git_dir.exists():
+        logger.warning(&quot;Git backup not configured.&quot;)
+        return False
+
+    db_size_mb = DB_PATH.stat().st_size / (1024 * 1024)
+    txn_count = _get_transaction_count()
+
+    _run_git(&quot;add&quot;, &quot;budget.db&quot;)
+
+    # Only commit if there are actual changes
+    status = _run_git(&quot;status&quot;, &quot;--porcelain&quot;, &quot;budget.db&quot;)
+    if not status.strip():
+        logger.info(&quot;No database changes to back up.&quot;)
+        return True
+
+    timestamp = datetime.now().strftime(&quot;%Y-%m-%d %H:%M&quot;)
+    msg = f&quot;Backup {timestamp} — {txn_count} transactions, {db_size_mb:.1f} MB&quot;
+    _run_git(&quot;commit&quot;, &quot;-m&quot;, msg)
+    _run_git(&quot;push&quot;, &quot;origin&quot;, &quot;main&quot;)
+</code></pre>
+<p>The commit message includes the transaction count and database size, so your Git history becomes a log of your database growth:</p>
+<pre><code>Backup 2025-02-16 07:28 — 3247 transactions, 12.3 MB
+Backup 2025-02-15 19:28 — 3241 transactions, 12.3 MB
+Backup 2025-02-15 07:28 — 3238 transactions, 12.2 MB
+</code></pre>
+<h3 id="running-it">Running It</h3>
+<p>The daemon supports three modes:</p>
+<pre><code class="language-bash"># One-shot: sync + backup, then exit
+python3 -m backend.sync_daemon
+
+# One-shot without backup
+python3 -m backend.sync_daemon --no-backup
+
+# Continuous: sync every 12 hours (or custom interval)
+python3 -m backend.sync_daemon --loop --interval 8
+</code></pre>
+<p>For automatic scheduling on macOS, create a LaunchAgent plist at <code>~/Library/LaunchAgents/com.budgetapp.sync.plist</code>:</p>
 <pre><code class="language-xml">&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
 &lt;!DOCTYPE plist PUBLIC &quot;-//Apple//DTD PLIST 1.0//EN&quot;
   &quot;http://www.apple.com/DTDs/PropertyList-1.0.dtd&quot;&gt;
 &lt;plist version=&quot;1.0&quot;&gt;
 &lt;dict&gt;
     &lt;key&gt;Label&lt;/key&gt;
-    &lt;string&gt;com.seanlewis.budgetapp.sync&lt;/string&gt;
-
+    &lt;string&gt;com.budgetapp.sync&lt;/string&gt;
     &lt;key&gt;ProgramArguments&lt;/key&gt;
     &lt;array&gt;
         &lt;string&gt;/path/to/python3&lt;/string&gt;
         &lt;string&gt;-m&lt;/string&gt;
         &lt;string&gt;backend.sync_daemon&lt;/string&gt;
     &lt;/array&gt;
-
     &lt;key&gt;WorkingDirectory&lt;/key&gt;
     &lt;string&gt;/path/to/budget-app&lt;/string&gt;
-
     &lt;key&gt;StartInterval&lt;/key&gt;
-    &lt;integer&gt;43200&lt;/integer&gt;  &lt;!-- 12 hours in seconds --&gt;
-
+    &lt;integer&gt;43200&lt;/integer&gt;
     &lt;key&gt;RunAtLoad&lt;/key&gt;
     &lt;true/&gt;
-
     &lt;key&gt;StandardOutPath&lt;/key&gt;
-    &lt;string&gt;~/BudgetApp/logs/sync.log&lt;/string&gt;
-
-    &lt;key&gt;StandardErrorPath&lt;/key&gt;
     &lt;string&gt;~/BudgetApp/logs/sync.log&lt;/string&gt;
 &lt;/dict&gt;
 &lt;/plist&gt;
 </code></pre>
-<p>Install and start the agent:</p>
-<pre><code class="language-bash">cp com.seanlewis.budgetapp.sync.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.seanlewis.budgetapp.sync.plist
-</code></pre>
-<p>The daemon writes to <code>~/BudgetApp/logs/sync.log</code> and syncs to the same <code>budget.db</code> used by the desktop app.</p>
-<h3 id="git-backup">Git Backup</h3>
-<p>The daemon can optionally back up <code>budget.db</code> to a private Git repository after each sync:</p>
-<pre><code class="language-bash"># One-time setup
-cd ~/BudgetApp
+<p>Load it with <code>launchctl load ~/Library/LaunchAgents/com.budgetapp.sync.plist</code> and it runs every 12 hours (43,200 seconds), including immediately on load. All output goes to <code>~/BudgetApp/logs/sync.log</code>.</p>
+<p>One-time Git backup setup:</p>
+<pre><code class="language-bash">cd ~/BudgetApp
 git init
 git remote add origin git@github.com:YOUR_USER/budget-app-data.git
 echo &quot;logs/&quot; &gt; .gitignore
@@ -571,21 +630,164 @@ git add .gitignore budget.db
 git commit -m &quot;Initial database backup&quot;
 git push -u origin main
 </code></pre>
-<p>After each sync, the daemon commits with a descriptive message:</p>
-<pre><code>Backup 2025-02-16 07:28 — 3247 transactions, 12.3 MB
-</code></pre>
 <hr>
-<h2 id="65-archive-import-backendroutersarchivepy">6.5 Archive Import (<code>backend/routers/archive.py</code>)</h2>
-<p>For importing historical data from before Plaid was connected, the archive system handles Excel/CSV exports:</p>
+<h2 id="66-archive-import">6.6 Archive Import</h2>
+<p>If you have years of historical transaction data in Excel spreadsheets or CSV files from before you set up Plaid, the archive importer brings it all into the database. This is what lets you have a complete financial picture going back years, not just from the day you connected your bank.</p>
+<h3 id="the-import-service-backendservicesarchive_importerpy">The Import Service (<code>backend/services/archive_importer.py</code>)</h3>
+<p>The archive importer handles five different file formats spanning four years (2021–2024), each with different column names, sheet structures, and category taxonomies. The core challenge is normalization — making all these different formats produce the same <code>Transaction</code> records.</p>
+<p><strong>Account resolution.</strong> Different files refer to the same account in different ways — "Wells Fargo," "wells_fargo," "WF," or just a sheet named "Wells." Two lookup dictionaries handle this:</p>
+<pre><code class="language-python">ACCOUNT_MAP = {
+    &quot;discover&quot;: &quot;discover&quot;,
+    &quot;wells_fargo&quot;: &quot;wellsfargo&quot;,
+    &quot;wells fargo&quot;: &quot;wellsfargo&quot;,
+    &quot;sofi_checking&quot;: &quot;sofi&quot;,
+    &quot;sofi_savings&quot;: &quot;sofi&quot;,
+    &quot;care_credit&quot;: &quot;care_credit&quot;,
+    &quot;amex&quot;: &quot;amex&quot;,
+    &quot;american_express&quot;: &quot;amex&quot;,
+    ...
+}
+
+ACCOUNT_TYPE_MAP = {
+    &quot;discover&quot;: &quot;credit&quot;,
+    &quot;wellsfargo&quot;: &quot;checking&quot;,
+    &quot;sofi_checking&quot;: &quot;checking&quot;,
+    &quot;sofi_savings&quot;: &quot;savings&quot;,
+    &quot;care_credit&quot;: &quot;credit&quot;,
+    ...
+}
+</code></pre>
+<p>If an account doesn't exist in the database yet, the importer creates it automatically using the display name lookup:</p>
+<pre><code class="language-python">def _ensure_account(inst, acct_type, acct_lookup, db):
+    # Try existing accounts first
+    key = f&quot;{inst}:{acct_type}&quot;
+    if key in acct_lookup:
+        return acct_lookup[key]
+
+    # Auto-create
+    display = ACCOUNT_DISPLAY_NAMES.get(inst, inst.replace(&quot;_&quot;, &quot; &quot;).title())
+    name = f&quot;{display} Card&quot; if acct_type == &quot;credit&quot; else f&quot;{display} Checking&quot;
+
+    new_acct = Account(name=name, institution=inst, account_type=acct_type)
+    db.add(new_acct)
+    db.flush()
+    acct_lookup[key] = new_acct
+    return new_acct
+</code></pre>
+<p><strong>Category resolution.</strong> Archive files have their own category systems. The 2021 files use "Secondary Category" and "Specific Category"; the 2022–2024 files use "Category_2" and "Short_Desc." Legacy names are mapped to the app's canonical names:</p>
+<pre><code class="language-python">LEGACY_CATEGORY_MAP = {
+    &quot;savings, investing, &amp; debt&quot;: &quot;Payment_and_Interest&quot;,
+    &quot;recreation &amp; entertainment&quot;: &quot;Recreation_Entertainment&quot;,
+    &quot;health &amp; wellness&quot;: &quot;Medical&quot;,
+    &quot;food &amp; drink&quot;: &quot;Food&quot;,
+    ...
+}
+
+LEGACY_SHORT_DESC_MAP = {
+    &quot;streaming services&quot;: &quot;subscriptions&quot;,
+    &quot;resteraunts&quot;: &quot;restaurant&quot;,   # Fixing original typo
+    &quot;conveinence store&quot;: &quot;conv_store&quot;,
+    ...
+}
+</code></pre>
+<p>The import happens in two phases:</p>
+<ol>
+<li>
+<p><strong>Category scan:</strong> Walk through every sheet, extract all Short_Desc → Category_2 pairs, and create any missing subcategories in the database. This ensures that when Phase 2 tries to assign categories to transactions, every category already exists.</p>
+</li>
+<li>
+<p><strong>Transaction import:</strong> Walk through every sheet again, parse each row into a transaction, resolve its account and category, check for duplicates, and insert.</p>
+</li>
+</ol>
+<p><strong>Column normalization</strong> handles the varying column names across formats:</p>
+<pre><code class="language-python">def _normalize_columns(columns):
+    col_map = {}
+    for col in columns:
+        cl = str(col).lower().strip()
+        if cl in (&quot;trans_date&quot;, &quot;trans. date&quot;, &quot;date&quot;, &quot;transaction date&quot;):
+            if &quot;date&quot; not in col_map:
+                col_map[&quot;date&quot;] = col
+        elif cl == &quot;amount&quot;:
+            col_map[&quot;amount&quot;] = col
+        elif cl == &quot;short_desc&quot;:
+            col_map[&quot;short_desc&quot;] = col
+        elif cl == &quot;specific category&quot;:
+            col_map[&quot;specific_category&quot;] = col
+            if &quot;short_desc&quot; not in col_map:
+                col_map[&quot;short_desc&quot;] = col
+        ...
+    return col_map
+</code></pre>
+<p><strong>Sign normalization</strong> is subtle. The app convention is positive = expense, negative = income. But bank account exports (checking, savings) use the opposite: positive = deposit, negative = debit. Credit card exports (Discover, Care Credit) use positive = purchase, which matches the app convention. American Express is an exception — it uses bank-style signs. The importer flips signs accordingly:</p>
+<pre><code class="language-python">needs_flip = (
+    (account and account.account_type in (&quot;checking&quot;, &quot;savings&quot;))
+    or (account and account.institution == &quot;amex&quot;)
+)
+if needs_flip:
+    amount = -amount
+</code></pre>
+<p><strong>Deduplication</strong> uses the same logic as the Plaid sync — matching on account, date, description, and amount:</p>
+<pre><code class="language-python">existing = db.query(Transaction).filter(
+    Transaction.account_id == account.id,
+    Transaction.date == txn_date,
+    Transaction.description == description,
+    Transaction.amount == amount,
+).first()
+if existing:
+    result[&quot;skipped_duplicates&quot;] += 1
+    continue
+</code></pre>
+<p>This means you can safely import the same archive file twice — duplicates are skipped.</p>
+<p><strong>Header detection.</strong> Some Excel files have blank rows before the actual column headers. The <code>_fix_header_row</code> function scans the first 10 rows looking for recognizable column names (like "Amount" or "Date") and re-reads the sheet with the correct header row:</p>
+<pre><code class="language-python">def _fix_header_row(df, file_path, sheet_name):
+    named_cols = [c for c in df.columns
+                  if not str(c).startswith(&quot;Unnamed&quot;)]
+    if len(named_cols) &gt;= 2:
+        return df  # Headers look fine
+
+    known_headers = {&quot;amount&quot;, &quot;description&quot;, &quot;date&quot;, &quot;short_desc&quot;, ...}
+    for i in range(min(10, len(df))):
+        row_vals = {str(v).lower().strip() for v in df.iloc[i] if pd.notna(v)}
+        if len(row_vals &amp; known_headers) &gt;= 2:
+            return pd.read_excel(file_path, sheet_name=sheet_name, header=i+1)
+    return df
+</code></pre>
+<h3 id="archive-router-backendroutersarchivepy">Archive Router (<code>backend/routers/archive.py</code>)</h3>
+<p>Three endpoints expose the import functionality:</p>
 <ul>
-<li><code>GET /api/archive/scan</code> — Scans <code>~/BudgetApp/</code> for importable files</li>
-<li><code>POST /api/archive/import</code> — Imports an archive file with deduplication</li>
-<li><code>GET /api/archive/coverage</code> — Shows data coverage by year and source</li>
+<li><code>GET /api/archive/scan</code> — Scans <code>~/BudgetApp/</code> for importable Excel and CSV files, returning them organized by year and type</li>
+<li><code>POST /api/archive/import</code> — Imports a specific file, returning counts of imported, skipped, and uncategorized transactions</li>
+<li><code>GET /api/archive/coverage</code> — Shows a coverage report: which years have data and from what sources (Plaid, archive, CSV)</li>
 </ul>
-<p>This enables building a complete financial history spanning years, even if Plaid was only connected recently.</p>
+<p>The coverage endpoint is particularly useful — it shows you at a glance where your financial history has gaps:</p>
+<pre><code class="language-python">@router.get(&quot;/coverage&quot;)
+def get_data_coverage(db):
+    results = db.query(
+        func.strftime(&quot;%Y&quot;, Transaction.date).label(&quot;year&quot;),
+        Transaction.source,
+        func.count(Transaction.id).label(&quot;count&quot;),
+        func.min(Transaction.date).label(&quot;earliest&quot;),
+        func.max(Transaction.date).label(&quot;latest&quot;),
+    ).group_by(
+        func.strftime(&quot;%Y&quot;, Transaction.date),
+        Transaction.source,
+    ).order_by(func.strftime(&quot;%Y&quot;, Transaction.date)).all()
+
+    # Group by year, with per-source breakdowns
+    ...
+</code></pre>
+<p>This might return something like: 2021 has 423 transactions from <code>archive_import</code>, 2022 has 891 from <code>archive_import</code>, 2023 has 1,247 from <code>archive_import</code>, 2024 has 890 from <code>archive_import</code> and 540 from <code>plaid</code>, and 2025 has 312 from <code>plaid</code>. That tells you exactly where your Plaid history starts and confirms the archives filled in everything before it.</p>
+<hr>
+<h2 id="67-cost-optimization-strategy">6.7 Cost Optimization Strategy</h2>
+<p>Running an AI-powered financial app involves real API costs. Here's how Budget App minimizes them:</p>
+<p><strong>Model selection by task.</strong> The initial financial analysis uses Claude Sonnet ($3/$15 per million tokens), which has the reasoning depth to spot patterns and give nuanced advice. Follow-up questions use Claude Haiku ($0.25/$1.25 per million), which is fast enough for conversational responses. The typical cost for a full analysis session (one deep analysis plus 3–4 follow-ups) is under $0.05.</p>
+<p><strong>Prompt caching.</strong> The financial snapshot that goes in the system prompt averages 1,000–1,500 tokens. With <code>cache_control: ephemeral</code>, the first request in a conversation pays full price, but follow-ups get a 90% discount on the cached portion. For a five-message chat session, this saves roughly $0.02 — small individually, but it adds up with daily use.</p>
+<p><strong>Server-side snapshot caching.</strong> The five-minute TTL on the financial snapshot means that during an active chat session, the database is queried once, not once per message.</p>
+<p><strong>Smart price fetching.</strong> Stock prices are only refreshed during US market hours on weekdays. Outside those times, the scheduler doesn't even make the API call. The <code>yfinance</code> batch download fetches all tickers in a single request rather than one per security.</p>
+<p><strong>Tiered categorization.</strong> The three-tier categorization system means Claude (the most expensive tier) only gets called for transactions that can't be categorized by the free amount-based rules or merchant pattern matching. In practice, 60–80% of transactions are categorized before AI is ever involved.</p>
 <hr>
 <h2 id="whats-next">What's Next</h2>
-<p>With all features built, Part 7 wraps everything in an Electron desktop application and covers the build and packaging process.</p>
+<p>With all features built, Part 7 wraps everything in an Electron desktop application and covers the build and packaging process — from <code>npm start</code> during development to a distributable <code>.dmg</code> file.</p>
 <p>→ <a href="07-electron-and-deployment.md">Part 7: Electron Desktop App &amp; Deployment</a></p>
       </div>
       <div class="docs-nav-footer">
