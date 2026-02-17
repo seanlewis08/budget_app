@@ -5,7 +5,7 @@ import {
   Upload, FileText, CheckCircle, AlertCircle,
   RefreshCw, Link2, Unlink, Wifi, WifiOff, DollarSign, Clock,
   CreditCard, Building2, PiggyBank, Landmark, Calendar, Database,
-  History, ChevronRight,
+  History, ChevronRight, Plus, X,
 } from 'lucide-react'
 
 // Icon map for account types
@@ -29,8 +29,6 @@ function formatCurrency(amount) {
 
 function timeAgo(dateStr) {
   if (!dateStr) return 'Never'
-  // Backend stores UTC times without a Z suffix — append it so the browser
-  // interprets the timestamp correctly instead of treating it as local time.
   const normalized = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z'
   const date = new Date(normalized)
   const now = new Date()
@@ -47,7 +45,6 @@ function timeAgo(dateStr) {
       relative = `${diffDays}d ago`
     }
   }
-  // Show actual time alongside relative
   const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
   const dateFormatted = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   if (diffMins < 1440) return `${relative} (${timeStr})`
@@ -67,15 +64,13 @@ function formatDateRange(earliest, latest) {
 
 
 // Plaid Link wrapper component
-function PlaidLinkButton({ accountId, onSuccess }) {
+function PlaidLinkButton({ accountId, onSuccess, large }) {
   const [linkToken, setLinkToken] = useState(null)
   const [loading, setLoading] = useState(false)
 
   const fetchLinkToken = async () => {
     setLoading(true)
     try {
-      // Only send redirect_uri if we're on HTTPS (required by Plaid production).
-      // OAuth banks (e.g. Wells Fargo) need this; non-OAuth banks work without it.
       const origin = window.location.origin
       const payload = { account_id: accountId }
       if (origin.startsWith('https://')) {
@@ -89,7 +84,6 @@ function PlaidLinkButton({ accountId, onSuccess }) {
       })
       const data = await res.json()
       if (res.ok) {
-        // Store for OAuth callback recovery
         sessionStorage.setItem('plaid_link_token', data.link_token)
         sessionStorage.setItem('plaid_account_id', String(accountId))
         setLinkToken(data.link_token)
@@ -100,7 +94,7 @@ function PlaidLinkButton({ accountId, onSuccess }) {
             'Bank syncing requires Plaid API credentials.\n\n' +
             'Add your PLAID_CLIENT_ID and PLAID_SECRET to:\n' +
             '~/BudgetApp/.env\n\n' +
-            'You can still import transactions via CSV on this page.'
+            'You can still import transactions via CSV on the Accounts page.'
           )
         } else {
           alert(detail || 'Failed to create link token')
@@ -138,11 +132,12 @@ function PlaidLinkButton({ accountId, onSuccess }) {
   return (
     <>
       <button
-        className="btn btn-primary acct-btn"
+        className={large ? 'btn btn-primary' : 'btn btn-primary acct-btn'}
         onClick={fetchLinkToken}
         disabled={loading}
+        style={large ? { padding: '10px 20px', fontSize: 14, display: 'inline-flex', alignItems: 'center', gap: 6 } : undefined}
       >
-        <Link2 size={14} />
+        <Link2 size={large ? 16 : 14} />
         {loading ? 'Connecting...' : 'Link Bank'}
       </button>
       {linkToken && (
@@ -169,6 +164,94 @@ function PlaidLinkOpener({ token, onSuccess, onExit }) {
   }, [ready, open])
 
   return null
+}
+
+
+// Add Account inline form
+function AddAccountForm({ onCreated, onCancel }) {
+  const [name, setName] = useState('')
+  const [institution, setInstitution] = useState('')
+  const [accountType, setAccountType] = useState('checking')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!name.trim() || !institution.trim()) return
+
+    setSaving(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/accounts/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim(),
+          institution: institution.trim().toLowerCase(),
+          account_type: accountType,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        onCreated(data)
+      } else {
+        setError(data.detail || 'Failed to create account')
+      }
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="acct-add-form">
+      <div className="acct-add-form-row">
+        <div className="acct-add-field">
+          <label>Account Name</label>
+          <input
+            type="text"
+            placeholder="e.g. Chase Checking"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            autoFocus
+            required
+          />
+        </div>
+        <div className="acct-add-field">
+          <label>Institution</label>
+          <input
+            type="text"
+            placeholder="e.g. chase"
+            value={institution}
+            onChange={e => setInstitution(e.target.value)}
+            required
+          />
+        </div>
+        <div className="acct-add-field">
+          <label>Type</label>
+          <select value={accountType} onChange={e => setAccountType(e.target.value)}>
+            <option value="checking">Checking</option>
+            <option value="savings">Savings</option>
+            <option value="credit">Credit Card</option>
+          </select>
+        </div>
+      </div>
+      {error && (
+        <div style={{ color: 'var(--red)', fontSize: 13, marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <AlertCircle size={14} /> {error}
+        </div>
+      )}
+      <div className="acct-add-form-actions">
+        <button type="submit" className="btn btn-primary" disabled={saving || !name.trim() || !institution.trim()}>
+          {saving ? 'Creating...' : 'Create Account'}
+        </button>
+        <button type="button" className="btn btn-secondary" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  )
 }
 
 
@@ -241,37 +324,42 @@ function AccountCard({ account, onRefresh }) {
         </div>
       </div>
 
-      {isConnected && (
+      {/* Show balances/stats for connected accounts or accounts with data */}
+      {(isConnected || (account.transaction_count || 0) > 0) && (
         <div className="acct-card-balances">
-          <div className="acct-balance-row">
-            <span className="acct-balance-label">
-              <DollarSign size={13} />
-              {account.account_type === 'credit' ? 'Balance' : 'Available'}
-            </span>
-            <span className="acct-balance-value">
-              {formatCurrency(
-                account.account_type === 'credit'
-                  ? account.balance_current
-                  : (account.balance_available ?? account.balance_current)
-              )}
-            </span>
-          </div>
-          {account.account_type === 'credit' && account.balance_limit && (
+          {isConnected && (
+            <div className="acct-balance-row">
+              <span className="acct-balance-label">
+                <DollarSign size={13} />
+                {account.account_type === 'credit' ? 'Balance' : 'Available'}
+              </span>
+              <span className="acct-balance-value">
+                {formatCurrency(
+                  account.account_type === 'credit'
+                    ? account.balance_current
+                    : (account.balance_available ?? account.balance_current)
+                )}
+              </span>
+            </div>
+          )}
+          {isConnected && account.account_type === 'credit' && account.balance_limit && (
             <div className="acct-balance-row">
               <span className="acct-balance-label">Credit Limit</span>
               <span className="acct-balance-value">{formatCurrency(account.balance_limit)}</span>
             </div>
           )}
-          <div className="acct-balance-row last-sync">
-            <span className="acct-balance-label">
-              <Clock size={13} />
-              Last synced
-            </span>
-            <span className="acct-balance-value muted">
-              {timeAgo(account.last_synced_at)}
-            </span>
-          </div>
-          {account.transaction_count > 0 && (
+          {isConnected && (
+            <div className="acct-balance-row last-sync">
+              <span className="acct-balance-label">
+                <Clock size={13} />
+                Last synced
+              </span>
+              <span className="acct-balance-value muted">
+                {timeAgo(account.last_synced_at)}
+              </span>
+            </div>
+          )}
+          {(account.transaction_count || 0) > 0 && (
             <>
               <div className="acct-balance-row">
                 <span className="acct-balance-label">
@@ -368,6 +456,7 @@ export default function Accounts({ onUpdate }) {
   const [accounts, setAccounts] = useState([])
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
+  const [showAddForm, setShowAddForm] = useState(false)
 
   // CSV upload state
   const [uploading, setUploading] = useState(false)
@@ -385,7 +474,7 @@ export default function Accounts({ onUpdate }) {
 
   const fetchAccounts = async () => {
     try {
-      const res = await fetch('/api/accounts')
+      const res = await fetch('/api/accounts/')
       if (res.ok) {
         const data = await res.json()
         setAccounts(data)
@@ -416,6 +505,11 @@ export default function Accounts({ onUpdate }) {
     } finally {
       setSyncing(false)
     }
+  }
+
+  const handleAccountCreated = (newAccount) => {
+    setShowAddForm(false)
+    handleRefresh()
   }
 
   // CSV upload handlers
@@ -453,26 +547,35 @@ export default function Accounts({ onUpdate }) {
     if (file) handleUpload(file)
   }
 
-  const connectedCount = accounts.filter(a => a.plaid_connection_status === 'connected').length
+  const connectedAccounts = accounts.filter(a => a.plaid_connection_status === 'connected')
+  const disconnectedAccounts = accounts.filter(a => a.plaid_connection_status !== 'connected')
+
+  if (loading) {
+    return (
+      <div>
+        <div className="page-header">
+          <h2>Accounts</h2>
+        </div>
+        <div className="card" style={{ padding: 40, textAlign: 'center' }}>
+          <p style={{ color: 'var(--text-muted)' }}>Loading accounts...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div>
       <div className="page-header">
-        <h2>Accounts & Import</h2>
-        <p>Link your bank accounts for automatic syncing or import CSVs manually</p>
+        <h2>Accounts</h2>
+        <p>Manage your linked accounts and import transactions</p>
       </div>
 
-      {/* Bank Accounts Section */}
+      {/* ─── Accounts Section ─── */}
       <div className="card">
         <div className="card-header">
           <h3>Bank Accounts</h3>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {connectedCount > 0 && (
-              <span style={{ fontSize: 13, color: 'var(--text-muted)', marginRight: 8 }}>
-                {connectedCount} of {accounts.length} connected
-              </span>
-            )}
-            {connectedCount > 0 && (
+            {connectedAccounts.length > 0 && (
               <button
                 className="btn btn-secondary"
                 onClick={handleSyncAll}
@@ -482,18 +585,27 @@ export default function Accounts({ onUpdate }) {
                 {syncing ? 'Syncing...' : 'Sync All'}
               </button>
             )}
+            <button
+              className="btn btn-primary"
+              onClick={() => setShowAddForm(true)}
+              disabled={showAddForm}
+            >
+              <Plus size={14} style={{ marginRight: 4 }} />
+              Add Account
+            </button>
           </div>
         </div>
 
-        {loading ? (
-          <div className="empty-state" style={{ padding: 30 }}>
-            <p>Loading accounts...</p>
-          </div>
-        ) : accounts.length === 0 ? (
-          <div className="empty-state" style={{ padding: 30 }}>
-            <p>No accounts found. Restart the backend to seed your 4 accounts.</p>
-          </div>
-        ) : (
+        {/* Add Account Form */}
+        {showAddForm && (
+          <AddAccountForm
+            onCreated={handleAccountCreated}
+            onCancel={() => setShowAddForm(false)}
+          />
+        )}
+
+        {/* Account Cards */}
+        {accounts.length > 0 ? (
           <div className="acct-grid">
             {accounts.map(account => (
               <AccountCard
@@ -503,28 +615,38 @@ export default function Accounts({ onUpdate }) {
               />
             ))}
           </div>
-        )}
-      </div>
-
-      {/* Sync History Link */}
-      <div
-        className="card settings-link-card"
-        style={{ cursor: 'pointer' }}
-        onClick={() => navigate('/sync-history')}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <History size={16} />
-            <span style={{ fontWeight: 500 }}>Sync History</span>
+        ) : !showAddForm ? (
+          <div className="acct-empty-state">
+            <Building2 size={36} style={{ color: 'var(--text-muted)', marginBottom: 12 }} />
+            <p style={{ color: 'var(--text-secondary)', marginBottom: 4 }}>No accounts yet</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+              Click <strong>Add Account</strong> above to create one, then link it to your bank via Plaid.
+            </p>
           </div>
-          <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />
-        </div>
-        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 0 26px' }}>
-          View a log of all sync operations across your accounts
-        </p>
+        ) : null}
       </div>
 
-      {/* CSV Import */}
+      {/* ─── Sync History Link ─── */}
+      {accounts.length > 0 && (
+        <div
+          className="card settings-link-card"
+          style={{ cursor: 'pointer' }}
+          onClick={() => navigate('/sync-history')}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <History size={16} />
+              <span style={{ fontWeight: 500 }}>Sync History</span>
+            </div>
+            <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />
+          </div>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 0 26px' }}>
+            View a log of all sync operations across your accounts
+          </p>
+        </div>
+      )}
+
+      {/* ─── CSV Import ─── */}
       <div className="card">
         <div className="card-header">
           <h3>Import CSV</h3>

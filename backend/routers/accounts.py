@@ -51,6 +51,12 @@ class AccountOut(BaseModel):
         from_attributes = True
 
 
+class AccountCreate(BaseModel):
+    name: str
+    institution: str
+    account_type: str  # "checking", "savings", or "credit"
+
+
 class LinkTokenRequest(BaseModel):
     account_id: int
     redirect_uri: Optional[str] = None
@@ -98,6 +104,25 @@ def list_accounts(db: Session = Depends(get_db)):
         results.append(out)
 
     return results
+
+
+@router.post("/", response_model=AccountOut)
+def create_account(req: AccountCreate, db: Session = Depends(get_db)):
+    """Create a new bank account that can then be linked via Plaid or used for CSV import."""
+    if req.account_type not in ("checking", "savings", "credit"):
+        raise HTTPException(status_code=400, detail="account_type must be checking, savings, or credit")
+
+    account = Account(
+        name=req.name,
+        institution=req.institution,
+        account_type=req.account_type,
+        plaid_connection_status="disconnected",
+    )
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    logger.info(f"Created account: {account.name} ({account.account_type}) at {account.institution}")
+    return AccountOut.model_validate(account)
 
 
 # NOTE: Literal paths (/sync-history) MUST be defined before

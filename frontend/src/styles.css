@@ -585,6 +585,35 @@ body {
   border-color: var(--accent);
 }
 
+.settings-row {
+  display: flex;
+  gap: 16px;
+}
+
+.settings-source-badge {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.settings-source-badge.db {
+  background: var(--green-bg);
+  color: var(--green);
+}
+
+.settings-source-badge.env {
+  background: rgba(96, 165, 250, 0.1);
+  color: var(--accent);
+}
+
+.settings-source-badge.none {
+  background: var(--bg-hover);
+  color: var(--text-muted);
+}
+
 /* Empty State */
 .empty-state {
   text-align: center;
@@ -1341,6 +1370,173 @@ body {
   color: var(--red);
 }
 
+/* Welcome / Getting Started */
+.acct-welcome {
+  margin-bottom: 16px;
+}
+
+.acct-welcome-options {
+  display: flex;
+  gap: 0;
+  align-items: stretch;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.acct-welcome-option {
+  flex: 1;
+  padding: 32px 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+}
+
+.acct-welcome-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+
+.acct-welcome-option h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.acct-welcome-option p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  max-width: 280px;
+}
+
+.acct-welcome-action {
+  margin-top: 4px;
+}
+
+.acct-welcome-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.acct-welcome-divider {
+  display: flex;
+  align-items: center;
+  padding: 0 4px;
+  position: relative;
+}
+
+.acct-welcome-divider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--border);
+}
+
+.acct-welcome-divider span {
+  position: relative;
+  z-index: 1;
+  background: var(--bg-secondary);
+  padding: 8px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Disconnected account rows */
+.acct-disconnect-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.acct-disconnect-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.acct-disconnect-row:last-child {
+  border-bottom: none;
+}
+
+.acct-disconnect-row-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Add Account Form */
+.acct-add-form {
+  padding: 16px;
+  margin-bottom: 16px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.acct-add-form-row {
+  display: flex;
+  gap: 12px;
+}
+
+.acct-add-field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.acct-add-field label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.acct-add-field input,
+.acct-add-field select {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.acct-add-field input:focus,
+.acct-add-field select:focus {
+  border-color: var(--accent);
+}
+
+.acct-add-form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* Empty state for accounts */
+.acct-empty-state {
+  text-align: center;
+  padding: 40px 20px;
+}
+
 /* Spin animation for sync buttons */
 @keyframes spin {
   from { transform: rotate(0deg); }
@@ -1365,6 +1561,23 @@ body {
   }
   .acct-grid {
     grid-template-columns: 1fr;
+  }
+  .acct-welcome-options {
+    flex-direction: column;
+  }
+  .acct-welcome-divider {
+    padding: 4px 0;
+  }
+  .acct-welcome-divider::before {
+    top: 50%;
+    bottom: auto;
+    left: 0;
+    right: 0;
+    width: auto;
+    height: 1px;
+  }
+  .acct-welcome-divider span {
+    padding: 0 12px;
   }
 }
 

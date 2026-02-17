@@ -25,7 +25,7 @@ load_dotenv()
 from .database import init_db
 from .investments_database import init_investments_db
 from .migrations import run_migrations
-from .routers import transactions, categories, budgets, import_csv, notifications, accounts, archive, investments, insights
+from .routers import transactions, categories, budgets, import_csv, notifications, accounts, archive, investments, insights, settings
 from .services.seed_data import seed_categories_and_accounts
 from .services.sync_scheduler import start_scheduler, stop_scheduler
 
@@ -68,6 +68,7 @@ app.include_router(accounts.router, prefix="/api/accounts", tags=["Accounts"])
 app.include_router(archive.router, prefix="/api/archive", tags=["Archive Import"])
 app.include_router(investments.router, prefix="/api/investments", tags=["Investments"])
 app.include_router(insights.router, prefix="/api/insights", tags=["Financial Insights"])
+app.include_router(settings.router, prefix="/api/settings", tags=["Settings"])
 
 
 @app.get("/health")
@@ -123,8 +124,14 @@ def _get_frontend_dir() -> Path | None:
     return None
 
 
+# Only serve the SPA catch-all in production (packaged) mode.
+# In development, Vite serves the frontend on its own port and proxies
+# /api calls to this backend.  Registering a catch-all @app.get("/{path}")
+# in dev mode causes Starlette to return 405 for POST/PUT/DELETE to any
+# path that also matches the catch-all, breaking API endpoints.
 _frontend_dir = _get_frontend_dir()
-if _frontend_dir and _frontend_dir.is_dir():
+_is_packaged = getattr(sys, 'frozen', False)
+if _frontend_dir and _frontend_dir.is_dir() and _is_packaged:
     # Mount static assets (JS, CSS, images)
     assets_dir = _frontend_dir / "assets"
     if assets_dir.is_dir():
@@ -134,6 +141,9 @@ if _frontend_dir and _frontend_dir.is_dir():
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         """Serve the React SPA for any route not matched by API endpoints."""
+        if full_path.startswith("api/") or full_path == "health":
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
         file_path = _frontend_dir / full_path
         if full_path and file_path.is_file():
             return FileResponse(str(file_path))

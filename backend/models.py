@@ -203,6 +203,19 @@ class NotificationLog(Base):
         return f"<NotificationLog txn={self.transaction_id} sent={self.sent_at}>"
 
 
+class AppSetting(Base):
+    """Key-value settings stored in the database (e.g. API keys, preferences).
+    Values here override .env file values at runtime."""
+    __tablename__ = "app_settings"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<AppSetting {self.key}>"
+
+
 class SyncLog(Base):
     """Log of every sync attempt — success or failure — for audit trail."""
     __tablename__ = "sync_log"
