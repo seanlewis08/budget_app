@@ -26,6 +26,9 @@ build = [
     "pyinstaller>=6.11.1",
 ]
 
+[tool.setuptools.packages.find]
+include = ["backend*"]
+
 [tool.uv]
 dev-dependencies = [
     "pytest>=8.0.0",
