@@ -5,7 +5,7 @@
  * In production: runs the PyInstaller-bundled executable
  */
 
-const { spawn } = require('child_process')
+const { spawn, execSync } = require('child_process')
 const path = require('path')
 const http = require('http')
 const { app } = require('electron')
@@ -14,6 +14,45 @@ let backendProcess = null
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 const BACKEND_PORT = 8000
+
+/**
+ * Kill any process currently listening on BACKEND_PORT.
+ * Prevents "address already in use" from stale previous runs.
+ */
+function killStaleBackend() {
+  try {
+    if (process.platform === 'win32') {
+      // Windows: find PID listening on the port, then kill it
+      const out = execSync(
+        `netstat -ano | findstr :${BACKEND_PORT} | findstr LISTENING`,
+        { encoding: 'utf8', timeout: 5000 }
+      )
+      const pids = new Set(
+        out.trim().split('\n')
+          .map(line => line.trim().split(/\s+/).pop())
+          .filter(Boolean)
+      )
+      for (const pid of pids) {
+        try { execSync(`taskkill /PID ${pid} /F`, { timeout: 5000 }) } catch {}
+      }
+    } else {
+      // macOS / Linux
+      const out = execSync(`lsof -ti:${BACKEND_PORT}`, {
+        encoding: 'utf8',
+        timeout: 5000,
+      })
+      const pids = out.trim().split('\n').filter(Boolean)
+      for (const pid of pids) {
+        try { process.kill(Number(pid), 'SIGKILL') } catch {}
+      }
+    }
+    if (process.platform !== 'win32') {
+      console.log(`Killed stale process(es) on port ${BACKEND_PORT}`)
+    }
+  } catch {
+    // No process on port — expected on clean launch
+  }
+}
 
 function getBackendPath() {
   if (isDev) {
@@ -35,6 +74,9 @@ function startBackend() {
     console.log('Backend already running')
     return
   }
+
+  // Clean up any zombie from a previous crash/quit
+  killStaleBackend()
 
   if (isDev) {
     // Development mode: run uvicorn
