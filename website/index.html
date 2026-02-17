@@ -501,50 +501,43 @@
     });
 
     // ── Dynamic download buttons ──
-    // Detect OS, fetch latest GitHub release, and show the right download button
+    // Always show both Mac and Windows buttons. Fetch latest GitHub release
+    // to get direct download URLs; fall back to releases page if unavailable.
     (async function setupDownloads() {
       const dlMac = document.getElementById('dl-mac');
       const dlWin = document.getElementById('dl-win');
       const dlFallback = document.getElementById('dl-fallback');
+      const releasesUrl = 'https://github.com/seanlewis08/budget_app/releases/latest';
 
-      // Detect user OS
+      // Detect user OS for button ordering
       const ua = navigator.userAgent.toLowerCase();
       const isMac = ua.includes('mac');
-      const isWin = ua.includes('win');
 
+      // Always show both buttons
+      dlMac.style.display = '';
+      dlWin.style.display = '';
+
+      // Style: user's OS is primary, other is secondary
+      if (isMac) {
+        dlWin.classList.replace('btn-primary', 'btn-secondary');
+      } else {
+        dlMac.classList.replace('btn-primary', 'btn-secondary');
+      }
+
+      // Try to get direct download URLs from latest release
       try {
         const res = await fetch('https://api.github.com/repos/seanlewis08/budget_app/releases/latest');
         if (!res.ok) throw new Error('No release found');
         const release = await res.json();
         const assets = release.assets || [];
 
-        // Find the .dmg and .exe assets
         const dmg = assets.find(a => a.name.endsWith('.dmg'));
         const exe = assets.find(a => a.name.endsWith('.exe'));
 
         if (dmg) dlMac.href = dmg.browser_download_url;
         if (exe) dlWin.href = exe.browser_download_url;
-
-        // Show OS-appropriate button first, then the other
-        if (isMac) {
-          if (dmg) { dlMac.style.display = ''; }
-          if (exe) { dlWin.style.display = ''; dlWin.classList.replace('btn-primary', 'btn-secondary'); }
-        } else if (isWin) {
-          if (exe) { dlWin.style.display = ''; }
-          if (dmg) { dlMac.style.display = ''; dlMac.classList.replace('btn-primary', 'btn-secondary'); }
-        } else {
-          // Linux or unknown — show both
-          if (dmg) dlMac.style.display = '';
-          if (exe) dlWin.style.display = '';
-        }
-
-        // If no assets found at all, show fallback to releases page
-        if (!dmg && !exe) {
-          dlFallback.style.display = '';
-        }
       } catch (e) {
-        // API failed — show fallback link to releases page
-        dlFallback.style.display = '';
+        // API failed — buttons still link to releases page (default href)
       }
     })();
   </script>
