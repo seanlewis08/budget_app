@@ -53,17 +53,13 @@
         your data to the cloud.
       </p>
       <div class="hero-actions" id="download-buttons">
-        <a id="dl-mac" href="https://github.com/seanlewis08/budget_app/releases/latest" class="btn btn-primary" style="display:none;">
+        <a id="dl-mac" href="https://github.com/seanlewis08/budget_app/releases/latest" class="btn btn-primary">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
           <span>Download for Mac</span>
         </a>
-        <a id="dl-win" href="https://github.com/seanlewis08/budget_app/releases/latest" class="btn btn-primary" style="display:none;">
+        <a id="dl-win" href="https://github.com/seanlewis08/budget_app/releases/latest" class="btn btn-secondary">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
           <span>Download for Windows</span>
-        </a>
-        <a id="dl-fallback" href="https://github.com/seanlewis08/budget_app/releases/latest" class="btn btn-primary" style="display:none;">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          <span>Download</span>
         </a>
       </div>
       <div class="hero-actions" style="margin-top: 0.5rem;">
@@ -500,44 +496,23 @@
       observer.observe(el);
     });
 
-    // ── Dynamic download buttons ──
-    // Always show both Mac and Windows buttons. Fetch latest GitHub release
-    // to get direct download URLs; fall back to releases page if unavailable.
+    // ── Download buttons: upgrade to direct download URLs ──
+    // Buttons are always visible (no JS required). This just swaps the
+    // href from the releases page to the actual .dmg / .exe file URL.
     (async function setupDownloads() {
-      const dlMac = document.getElementById('dl-mac');
-      const dlWin = document.getElementById('dl-win');
-      const dlFallback = document.getElementById('dl-fallback');
-      const releasesUrl = 'https://github.com/seanlewis08/budget_app/releases/latest';
-
-      // Detect user OS for button ordering
-      const ua = navigator.userAgent.toLowerCase();
-      const isMac = ua.includes('mac');
-
-      // Always show both buttons
-      dlMac.style.display = '';
-      dlWin.style.display = '';
-
-      // Style: user's OS is primary, other is secondary
-      if (isMac) {
-        dlWin.classList.replace('btn-primary', 'btn-secondary');
-      } else {
-        dlMac.classList.replace('btn-primary', 'btn-secondary');
-      }
-
-      // Try to get direct download URLs from latest release
       try {
         const res = await fetch('https://api.github.com/repos/seanlewis08/budget_app/releases/latest');
-        if (!res.ok) throw new Error('No release found');
+        if (!res.ok) return;
         const release = await res.json();
         const assets = release.assets || [];
 
         const dmg = assets.find(a => a.name.endsWith('.dmg'));
         const exe = assets.find(a => a.name.endsWith('.exe'));
 
-        if (dmg) dlMac.href = dmg.browser_download_url;
-        if (exe) dlWin.href = exe.browser_download_url;
+        if (dmg) document.getElementById('dl-mac').href = dmg.browser_download_url;
+        if (exe) document.getElementById('dl-win').href = exe.browser_download_url;
       } catch (e) {
-        // API failed — buttons still link to releases page (default href)
+        // Buttons still link to releases page — that's fine
       }
     })();
   </script>
