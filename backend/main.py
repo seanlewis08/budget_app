@@ -105,19 +105,29 @@ def get_stats():
 # When running as a PyInstaller bundle, serve the frontend static files
 # so that relative /api calls work on the same origin.
 def _get_frontend_dir() -> Path | None:
-    """Find the frontend/dist directory in the packaged app.
+    """Find the frontend/dist directory.
 
-    Search order (packaged mode):
+    Search order:
+      0. BUDGET_APP_FRONTEND_DIR env var (set by Electron — most reliable)
       1. PyInstaller _MEIPASS/frontend_dist  (bundled via spec datas=)
       2. PyInstaller _MEIPASS/frontend/dist
-      3. Electron Resources/frontend/dist    (extraResources in package.json)
+      3. Electron Resources/frontend/dist    (extraResources)
       4. Next to the executable               (fallback)
+      5. Development: ../frontend/dist
     """
+    # Priority 0: Electron tells us exactly where the frontend is
+    env_dir = os.environ.get("BUDGET_APP_FRONTEND_DIR")
+    if env_dir:
+        p = Path(env_dir)
+        if p.is_dir() and (p / "index.html").is_file():
+            logger.info(f"Frontend found via BUDGET_APP_FRONTEND_DIR: {p}")
+            return p
+        else:
+            logger.warning(f"BUDGET_APP_FRONTEND_DIR set to {env_dir} but not valid (dir={p.is_dir()})")
+
     if getattr(sys, 'frozen', False):
         meipass = Path(sys._MEIPASS)
         exe_dir = Path(sys.executable).parent
-        # On macOS: exe is in Contents/Resources/backend/budget-app-backend
-        # So exe_dir.parent = Contents/Resources/
         resources_dir = exe_dir.parent
 
         candidates = [
@@ -133,11 +143,11 @@ def _get_frontend_dir() -> Path | None:
             has_index = (c / "index.html").is_file() if c.is_dir() else False
             logger.info(f"Frontend search: {c} → dir={c.is_dir()}, index.html={has_index}")
             if c.is_dir() and has_index:
-                logger.info(f"✓ Using frontend dir: {c}")
+                logger.info(f"Using frontend dir: {c}")
                 return c
 
         # Log diagnostic info if nothing found
-        logger.error(f"Frontend NOT FOUND in packaged mode!")
+        logger.error("Frontend NOT FOUND in packaged mode!")
         logger.error(f"  sys._MEIPASS = {meipass}")
         logger.error(f"  sys.executable = {sys.executable}")
         logger.error(f"  exe_dir = {exe_dir}")
@@ -145,7 +155,6 @@ def _get_frontend_dir() -> Path | None:
         if meipass.is_dir():
             logger.error(f"  _MEIPASS contents: {list(meipass.iterdir())}")
     else:
-        # Development: frontend/dist relative to project root
         dev_path = Path(__file__).resolve().parent.parent / "frontend" / "dist"
         if dev_path.is_dir():
             return dev_path

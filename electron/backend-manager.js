@@ -53,10 +53,17 @@ function startBackend() {
     // Production mode: run PyInstaller bundle
     const backendPath = getBackendPath()
     console.log(`Starting backend from: ${backendPath}`)
+    // Tell the backend where the frontend files are so it can serve the SPA.
+    // This is the most reliable approach — Electron always knows its own
+    // resourcesPath, and we ship frontend/dist as an extraResource.
+    const frontendDir = path.join(process.resourcesPath, 'frontend', 'dist')
+    console.log(`Frontend dir for backend: ${frontendDir}`)
+
     backendProcess = spawn(backendPath, [], {
       env: {
         ...process.env,
         BUDGET_APP_PORT: String(BACKEND_PORT),
+        BUDGET_APP_FRONTEND_DIR: frontendDir,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     })

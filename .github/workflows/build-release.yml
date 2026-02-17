@@ -50,6 +50,13 @@ jobs:
       - name: Build React frontend
         run: npm run build:frontend
 
+      - name: Verify frontend build
+        run: |
+          echo "=== frontend/dist contents ==="
+          ls -la frontend/dist/
+          echo "=== Checking for index.html ==="
+          test -f frontend/dist/index.html && echo "OK: index.html exists" || (echo "FAIL: index.html missing!" && exit 1)
+
       - name: Build Python backend (PyInstaller)
         run: |
           cd backend
