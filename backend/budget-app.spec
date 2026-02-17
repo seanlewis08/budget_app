@@ -10,8 +10,8 @@ from pathlib import Path
 block_cipher = None
 
 a = Analysis(
-    ['main.py'],
-    pathex=[],
+    ['run_app.py'],
+    pathex=[str(Path.cwd().parent)],
     binaries=[],
     datas=[],
     hiddenimports=[
