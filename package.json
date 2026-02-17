@@ -47,6 +47,10 @@
         {
           "from": "backend/dist/budget-app-backend",
           "to": "backend/budget-app-backend"
+        },
+        {
+          "from": "frontend/dist",
+          "to": "frontend/dist"
         }
       ]
     },
@@ -62,6 +66,10 @@
         {
           "from": "backend/dist/budget-app-backend.exe",
           "to": "backend/budget-app-backend.exe"
+        },
+        {
+          "from": "frontend/dist",
+          "to": "frontend/dist"
         }
       ]
     },
