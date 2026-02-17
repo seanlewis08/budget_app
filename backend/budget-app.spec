@@ -13,7 +13,9 @@ a = Analysis(
     ['run_app.py'],
     pathex=[str(Path.cwd().parent)],
     binaries=[],
-    datas=[],
+    datas=[
+        (str(Path.cwd().parent / 'frontend' / 'dist'), 'frontend_dist'),
+    ],
     hiddenimports=[
         'uvicorn.logging',
         'uvicorn.loops',

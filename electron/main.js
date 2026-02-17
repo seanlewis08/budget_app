@@ -45,11 +45,11 @@ function createWindow() {
 
   // Load the app
   if (isDev) {
-    // Development: load from Vite dev server
+    // Development: load from Vite dev server (proxy handles /api)
     mainWindow.loadURL('http://localhost:5173')
   } else {
-    // Production: load the built React app
-    mainWindow.loadFile(path.join(__dirname, '..', 'frontend', 'dist', 'index.html'))
+    // Production: load via backend so relative /api calls work
+    mainWindow.loadURL('http://localhost:8000')
   }
 
   // Open external links in default browser

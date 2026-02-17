@@ -4,11 +4,14 @@ Main entry point. Registers all routers and initializes the database.
 """
 
 import os
+import sys
 import logging
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
@@ -95,3 +98,43 @@ def get_stats():
         }
     finally:
         db.close()
+
+
+# ── Serve React frontend in production (packaged app) ──
+# When running as a PyInstaller bundle, serve the frontend static files
+# so that relative /api calls work on the same origin.
+def _get_frontend_dir() -> Path | None:
+    """Find the frontend/dist directory in the packaged app."""
+    if getattr(sys, 'frozen', False):
+        # PyInstaller: look for frontend_dist next to the executable
+        base = Path(sys._MEIPASS)
+        candidates = [
+            base / "frontend_dist",
+            base / "frontend" / "dist",
+        ]
+        for c in candidates:
+            if c.is_dir():
+                return c
+    else:
+        # Development: frontend/dist relative to project root
+        dev_path = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+        if dev_path.is_dir():
+            return dev_path
+    return None
+
+
+_frontend_dir = _get_frontend_dir()
+if _frontend_dir and _frontend_dir.is_dir():
+    # Mount static assets (JS, CSS, images)
+    assets_dir = _frontend_dir / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="static-assets")
+
+    # Catch-all: serve index.html for any non-API route (SPA routing)
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Serve the React SPA for any route not matched by API endpoints."""
+        file_path = _frontend_dir / full_path
+        if full_path and file_path.is_file():
+            return FileResponse(str(file_path))
+        return FileResponse(str(_frontend_dir / "index.html"))
