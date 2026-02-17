@@ -5,7 +5,7 @@ import {
   Upload, FileText, CheckCircle, AlertCircle,
   RefreshCw, Link2, Unlink, Wifi, WifiOff, DollarSign, Clock,
   CreditCard, Building2, PiggyBank, Landmark, Calendar, Database,
-  History, ChevronRight, Plus, X,
+  History, ChevronRight, Plus, X, Trash2,
 } from 'lucide-react'
 
 // Icon map for account types
@@ -303,6 +303,20 @@ function AccountCard({ account, onRefresh }) {
     }
   }
 
+  const handleDelete = async () => {
+    const txnCount = account.transaction_count || 0
+    const msg = txnCount > 0
+      ? `Permanently delete "${account.name}" and all ${txnCount.toLocaleString()} transactions? This cannot be undone.`
+      : `Permanently delete "${account.name}"? This cannot be undone.`
+    if (!confirm(msg)) return
+    try {
+      const res = await fetch(`/api/accounts/${account.id}`, { method: 'DELETE' })
+      if (res.ok) onRefresh()
+    } catch (err) {
+      console.error('Delete failed:', err)
+    }
+  }
+
   return (
     <div className="acct-card">
       <div className="acct-card-header">
@@ -429,6 +443,13 @@ function AccountCard({ account, onRefresh }) {
             onSuccess={() => onRefresh()}
           />
         )}
+        <button
+          className="btn btn-secondary acct-btn acct-btn-delete"
+          onClick={handleDelete}
+          title="Remove account"
+        >
+          <Trash2 size={14} />
+        </button>
       </div>
 
       {syncResult && (

@@ -8,6 +8,7 @@ Endpoints:
 - POST   /api/accounts/link/exchange — Exchange public_token for access_token
 - POST   /api/accounts/{id}/sync     — Trigger manual transaction sync
 - POST   /api/accounts/{id}/balances — Refresh account balances
+- DELETE /api/accounts/{id}      — Remove an account and all its transactions
 """
 
 import logging
@@ -123,6 +124,36 @@ def create_account(req: AccountCreate, db: Session = Depends(get_db)):
     db.refresh(account)
     logger.info(f"Created account: {account.name} ({account.account_type}) at {account.institution}")
     return AccountOut.model_validate(account)
+
+
+@router.delete("/{account_id}")
+def delete_account(account_id: int, db: Session = Depends(get_db)):
+    """
+    Permanently remove an account and all its associated data:
+    transactions, sync logs, and Plaid connection info.
+    """
+    from ..models import SyncLog
+
+    account = db.query(Account).get(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    name = account.name
+
+    # Delete related records first (foreign key constraints)
+    txn_count = db.query(Transaction).filter(Transaction.account_id == account_id).delete()
+    log_count = db.query(SyncLog).filter(SyncLog.account_id == account_id).delete()
+
+    db.delete(account)
+    db.commit()
+
+    logger.info(f"Deleted account '{name}' with {txn_count} transactions and {log_count} sync logs")
+    return {
+        "status": "deleted",
+        "account": name,
+        "transactions_removed": txn_count,
+        "sync_logs_removed": log_count,
+    }
 
 
 # NOTE: Literal paths (/sync-history) MUST be defined before

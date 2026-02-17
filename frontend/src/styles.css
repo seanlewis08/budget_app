@@ -1340,7 +1340,8 @@ body {
   padding: 6px 10px;
 }
 
-.acct-btn-unlink:hover {
+.acct-btn-unlink:hover,
+.acct-btn-delete:hover {
   color: var(--red) !important;
   border-color: rgba(248, 113, 113, 0.3) !important;
   background: var(--red-bg) !important;
