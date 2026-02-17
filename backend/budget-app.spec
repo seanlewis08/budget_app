@@ -5,15 +5,25 @@ Bundles the FastAPI app into a single executable.
 """
 
 import sys
+import importlib
 from pathlib import Path
 
 block_cipher = None
+
+# Include the certifi CA bundle so SSL works in the packaged binary.
+# Without this, any HTTPS request (Plaid, OpenAI, etc.) fails with
+# CERTIFICATE_VERIFY_FAILED.
+certifi_pkg = importlib.import_module('certifi')
+certifi_pem = certifi_pkg.where()  # e.g. .../certifi/cacert.pem
+certifi_dir = str(Path(certifi_pem).parent)
 
 a = Analysis(
     ['run_app.py'],
     pathex=[str(Path.cwd().parent)],
     binaries=[],
-    datas=[],
+    datas=[
+        (certifi_dir, 'certifi'),  # bundles cacert.pem into the binary
+    ],
     # NOTE: Frontend files are NOT bundled here. They ship as Electron
     # extraResources (see package.json) and the backend receives the
     # path via the BUDGET_APP_FRONTEND_DIR environment variable.
