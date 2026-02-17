@@ -44,8 +44,8 @@ class PlaidService:
     # ── Client Initialization ──
 
     @property
-    def client(self) -> plaid_api.PlaidApi:
-        """Lazy-init the Plaid API client."""
+    def client(self) -> Optional[plaid_api.PlaidApi]:
+        """Lazy-init the Plaid API client. Returns None if credentials are missing."""
         if self._client is None:
             env = os.getenv("PLAID_ENV", "sandbox").lower().strip()
             host = {
@@ -64,11 +64,11 @@ class PlaidService:
                 secret = os.getenv("PLAID_SECRET")
 
             if not secret:
-                raise ValueError(
-                    f"No Plaid secret found for environment '{env}'. "
-                    f"Set PLAID_PRODUCTION_SECRET (for production) or "
-                    f"PLAID_SECRET (for sandbox) in your .env file."
+                logger.warning(
+                    "Plaid credentials not configured — bank syncing disabled. "
+                    "Add PLAID_SECRET to ~/BudgetApp/.env to enable."
                 )
+                return None
 
             logger.info(f"Initializing Plaid client for '{env}' environment")
 
@@ -82,6 +82,14 @@ class PlaidService:
             api_client = plaid.ApiClient(configuration)
             self._client = plaid_api.PlaidApi(api_client)
         return self._client
+
+    def _require_client(self):
+        """Raise a clear error if Plaid is not configured."""
+        if not self.client:
+            raise ValueError(
+                "Plaid is not configured. Add your PLAID_CLIENT_ID and "
+                "PLAID_SECRET to ~/BudgetApp/.env to enable bank syncing."
+            )
 
     @property
     def fernet(self) -> Fernet:
@@ -140,6 +148,7 @@ class PlaidService:
         redirect_uri is required for OAuth institutions (e.g. Wells Fargo)
         in production. Must match an allowed URI in Plaid dashboard.
         """
+        self._require_client()
         kwargs = dict(
             products=[Products("transactions")],
             client_name="Budget App",
@@ -171,6 +180,7 @@ class PlaidService:
         Also detects sibling accounts at the same institution and links
         them to the same Plaid item (e.g. SoFi checking + savings).
         """
+        self._require_client()
         from ..models import Account
 
         request = ItemPublicTokenExchangeRequest(public_token=public_token)
@@ -291,6 +301,7 @@ class PlaidService:
 
         Returns: {"added": int, "modified": int, "removed": int}
         """
+        self._require_client()
         import time as _time
         from ..models import Transaction, SyncLog
         from .categorize import categorize_transaction
@@ -679,6 +690,7 @@ class PlaidService:
         self, user_id: int, redirect_uri: Optional[str] = None
     ) -> str:
         """Create a link_token that requests the investments product."""
+        self._require_client()
         kwargs = dict(
             products=[Products("investments")],
             client_name="Budget App",
@@ -703,6 +715,7 @@ class PlaidService:
         Creates a daily snapshot of each holding.
         Returns: {"securities_upserted": int, "holdings_upserted": int}
         """
+        self._require_client()
         from ..models_investments import Security, Holding
         from datetime import date as date_type
 
@@ -833,6 +846,7 @@ class PlaidService:
         Deduplicates by plaid_investment_transaction_id.
         Returns: {"added": int, "skipped": int}
         """
+        self._require_client()
         from ..models_investments import Security, InvestmentTransaction
         from datetime import timedelta
         from datetime import date as date_type

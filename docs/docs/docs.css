@@ -57,7 +57,7 @@
 }
 
 .docs-nav a.active {
-  background: rgba(108, 92, 231, 0.1);
+  background: rgba(92, 224, 184, 0.1);
   color: var(--accent-light);
 }
 
@@ -76,7 +76,7 @@
 }
 
 .docs-nav a.active .docs-nav-num {
-  background: rgba(108, 92, 231, 0.2);
+  background: rgba(92, 224, 184, 0.2);
   color: var(--accent);
 }
 
@@ -311,7 +311,7 @@
   border-left: 3px solid var(--accent);
   padding: 12px 20px;
   margin: 20px 0;
-  background: rgba(108, 92, 231, 0.05);
+  background: rgba(92, 224, 184, 0.05);
   border-radius: 0 var(--radius) var(--radius) 0;
 }
 

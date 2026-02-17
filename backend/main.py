@@ -4,11 +4,19 @@ Main entry point. Registers all routers and initializes the database.
 """
 
 import os
+import logging
+from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
+logger = logging.getLogger(__name__)
+
+# Load .env from ~/BudgetApp/.env first (works when running as packaged app),
+# then fall back to CWD/.env (works during development).
+# Second call is a no-op for vars already set by the first.
+load_dotenv(dotenv_path=Path.home() / "BudgetApp" / ".env")
 load_dotenv()
 
 from .database import init_db

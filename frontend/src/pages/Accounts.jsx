@@ -94,7 +94,17 @@ function PlaidLinkButton({ accountId, onSuccess }) {
         sessionStorage.setItem('plaid_account_id', String(accountId))
         setLinkToken(data.link_token)
       } else {
-        alert(data.detail || 'Failed to create link token')
+        const detail = data.detail || ''
+        if (detail.toLowerCase().includes('plaid') && detail.toLowerCase().includes('not configured')) {
+          alert(
+            'Bank syncing requires Plaid API credentials.\n\n' +
+            'Add your PLAID_CLIENT_ID and PLAID_SECRET to:\n' +
+            '~/BudgetApp/.env\n\n' +
+            'You can still import transactions via CSV on this page.'
+          )
+        } else {
+          alert(detail || 'Failed to create link token')
+        }
       }
     } catch (err) {
       alert('Error connecting to Plaid: ' + err.message)
