@@ -30,12 +30,43 @@ from .services.seed_data import seed_categories_and_accounts
 from .services.sync_scheduler import start_scheduler, stop_scheduler
 
 
+def _load_db_settings_into_env():
+    """
+    Load all settings from the app_settings DB table into os.environ.
+
+    The Settings page saves API keys (Plaid, Anthropic, etc.) to the database,
+    but services like PlaidService read from os.getenv(). Without this step,
+    credentials are lost on restart because they were never written to .env.
+    """
+    from .database import SessionLocal
+    from .models import AppSetting
+    from .routers.settings import SETTING_ENV_MAP
+
+    db = SessionLocal()
+    try:
+        rows = db.query(AppSetting).all()
+        loaded = []
+        for row in rows:
+            if row.value and row.key in SETTING_ENV_MAP:
+                env_var = SETTING_ENV_MAP[row.key]
+                os.environ[env_var] = row.value
+                loaded.append(row.key)
+
+        if loaded:
+            logger.info(f"Loaded {len(loaded)} setting(s) from DB into env: {', '.join(loaded)}")
+    except Exception as e:
+        logger.warning(f"Could not load DB settings: {e}")
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Run on startup: create tables, migrate, seed data, start sync scheduler."""
     init_db()
     init_investments_db()
     run_migrations()
+    _load_db_settings_into_env()
     seed_categories_and_accounts()
     start_scheduler()
     yield
