@@ -51,6 +51,7 @@ jobs:
         run: npm run build:frontend
 
       - name: Verify frontend build
+        shell: bash
         run: |
           echo "=== frontend/dist contents ==="
           ls -la frontend/dist/
