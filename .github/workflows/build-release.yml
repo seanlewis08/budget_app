@@ -3,13 +3,21 @@ name: Build & Release
 on:
   push:
     tags:
-      - 'v*' # Trigger on version tags like v0.1.0
+      - 'v*'          # Trigger on version tags like v0.1.1
+  workflow_dispatch:    # Allow manual trigger from GitHub UI
+
+permissions:
+  contents: write      # Needed to create releases and upload assets
 
 jobs:
   build:
     strategy:
       matrix:
-        os: [macos-latest, windows-latest]
+        include:
+          - os: macos-latest
+            platform: mac
+          - os: windows-latest
+            platform: win
 
     runs-on: ${{ matrix.os }}
 
@@ -17,39 +25,86 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Setup Python
+      - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
 
       - name: Install Python dependencies
         run: |
-          pip install -r backend/requirements.txt
+          pip install pyinstaller
+          pip install .
+
+      - name: Install Node dependencies
+        run: npm install
+
+      - name: Install frontend dependencies
+        run: cd frontend && npm install
+
+      - name: Build React frontend
+        run: npm run build:frontend
 
       - name: Build Python backend (PyInstaller)
         run: |
           cd backend
           pyinstaller budget-app.spec
 
-      - name: Install Node dependencies
-        run: npm install
-
-      - name: Build React frontend
-        run: npm run build:frontend
-
-      - name: Build Electron app
+      - name: Build Electron app (macOS)
+        if: matrix.platform == 'mac'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --publish always
+        run: npx electron-builder --mac
 
-      - name: Upload artifacts
+      - name: Build Electron app (Windows)
+        if: matrix.platform == 'win'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win
+
+      - name: Upload macOS artifacts
+        if: matrix.platform == 'mac'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.os }}-build
-          path: dist/*.{dmg,exe,zip}
+          name: mac-build
+          path: dist/*.dmg
           if-no-files-found: warn
+
+      - name: Upload Windows artifacts
+        if: matrix.platform == 'win'
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-build
+          path: dist/*.exe
+          if-no-files-found: warn
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List downloaded files
+        run: find artifacts -type f
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/mac-build/*
+            artifacts/win-build/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

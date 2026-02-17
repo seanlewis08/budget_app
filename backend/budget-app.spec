@@ -38,6 +38,7 @@ a = Analysis(
         'backend.routers.archive',
         'backend.routers.investments',
         'backend.routers.insights',
+        'backend.routers.settings',
         # Services
         'backend.services.categorize',
         'backend.services.seed_data',
