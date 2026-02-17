@@ -1,6 +1,6 @@
 {
   "name": "budget-app",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Personal finance tracker with AI-powered categorization",
   "main": "electron/main.js",
   "author": "Sean Lewis",
@@ -34,12 +34,6 @@
       "electron/**/*",
       "frontend/dist/**/*"
     ],
-    "extraResources": [
-      {
-        "from": "backend/dist/budget-app-backend",
-        "to": "backend/budget-app-backend"
-      }
-    ],
     "mac": {
       "category": "public.app-category.finance",
       "icon": "electron/icons/icon.icns",
@@ -47,6 +41,12 @@
         {
           "target": "dmg",
           "arch": ["x64", "arm64"]
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "backend/dist/budget-app-backend",
+          "to": "backend/budget-app-backend"
         }
       ]
     },
@@ -56,6 +56,12 @@
         {
           "target": "nsis",
           "arch": ["x64"]
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "backend/dist/budget-app-backend.exe",
+          "to": "backend/budget-app-backend.exe"
         }
       ]
     },
